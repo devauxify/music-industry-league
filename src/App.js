@@ -26,6 +26,12 @@ export default function App() {
 
   async function detectRole(userId) {
     setLoading(true)
+    const { data: admin } = await supabase
+      .from('admins')
+      .select('id')
+      .eq('user_id', userId)
+      .single()
+    if (admin) { setUserRole('admin'); setLoading(false); return }
     const { data: artist } = await supabase
       .from('artists')
       .select('id')
@@ -61,6 +67,7 @@ export default function App() {
   }
 
   // Logged in — route by role
+  if (userRole === 'admin')  return <AdminDashboard session={session} onSignOut={handleSignOut} />
   if (userRole === 'artist') return <ArtistDashboard session={session} onSignOut={handleSignOut} />
   if (userRole === 'fan')    return <FanDashboard session={session} onSignOut={handleSignOut} />
 
@@ -161,6 +168,31 @@ function PickRole({ session, onPicked, onSignOut }) {
 }
 
 // ─── ARTIST DASHBOARD (placeholder) ─────────────────────────────────────────
+function AdminDashboard({ session, onSignOut }) {
+  async function changePassword() {
+    const newPassword = prompt('Enter your new password (min 6 characters):')
+    if (!newPassword) return
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) { alert('Error: ' + error.message); return }
+    alert('Password updated successfully! You can now log in with this password.')
+  }
+
+  return (
+    <div style={{minHeight:'100vh',background:'#05070a',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'monospace',color:'#fff'}}>
+      <div style={{textAlign:'center'}}>
+        <div style={{fontSize:11,letterSpacing:3,color:'#b4ff3c',marginBottom:8}}>ADMIN PORTAL</div>
+        <div style={{fontSize:11,color:'#444',marginBottom:24}}>{session.user.email}</div>
+        <button style={{background:'transparent',border:'1px solid rgba(180,255,60,0.3)',color:'#b4ff3c',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',marginBottom:12,display:'block',width:'100%'}} onClick={changePassword}>
+          SET PASSWORD
+        </button>
+        <button style={{background:'transparent',border:'1px solid rgba(255,255,255,0.1)',color:'#555',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={onSignOut}>
+          SIGN OUT
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function ArtistDashboard({ session, onSignOut }) {
   return (
     <div style={{minHeight:'100vh',background:'#05070a',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'monospace',color:'#fff'}}>

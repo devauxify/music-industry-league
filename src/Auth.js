@@ -20,6 +20,18 @@ export default function Auth({ role, onBack }) {
     setLoading(false)
   }
 
+  async function handleForgotPassword() {
+    if (!email) { setError('Enter your email address first'); return }
+    setLoading(true)
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    })
+    if (error) { setError(error.message); setLoading(false); return }
+    setError('')
+    alert('Password reset email sent — check your inbox')
+    setLoading(false)
+  }
+
   async function handleSignup(e) {
     e.preventDefault()
     setLoading(true)
@@ -74,8 +86,11 @@ export default function Auth({ role, onBack }) {
             <input style={S.input} type="email" placeholder="you@email.com" value={email} onChange={e=>setEmail(e.target.value)} required/>
             <label style={S.label}>PASSWORD</label>
             <input style={S.input} type="password" placeholder="••••••••" value={password} onChange={e=>setPassword(e.target.value)} required/>
-            <button style={S.btn} type="submit" disabled={loading}>
+           <button style={S.btn} type="submit" disabled={loading}>
               {loading ? 'LOGGING IN...' : 'LOG IN →'}
+            </button>
+            <button type="button" onClick={handleForgotPassword} style={S.forgotBtn}>
+              FORGOT PASSWORD?
             </button>
           </form>
         )}
@@ -121,4 +136,5 @@ const S = {
   success:{background:'rgba(180,255,60,0.08)',border:'1px solid rgba(180,255,60,0.2)',color:'#b4ff3c',padding:'10px 14px',fontSize:11,borderRadius:2,marginBottom:12},
   error:{background:'rgba(255,45,120,0.08)',border:'1px solid rgba(255,45,120,0.2)',color:'#ff2d78',padding:'10px 14px',fontSize:11,borderRadius:2,marginBottom:12},
   backBtn:{background:'transparent',border:'none',color:'#444',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'inherit',padding:'0 0 16px 0',display:'block'},
+  forgotBtn:{background:'transparent',border:'none',color:'#444',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'inherit',padding:'8px 0 0 0',display:'block',width:'100%',textAlign:'center'},
 }
