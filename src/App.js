@@ -169,25 +169,227 @@ function PickRole({ session, onPicked, onSignOut }) {
 
 // ─── ARTIST DASHBOARD (placeholder) ─────────────────────────────────────────
 function AdminDashboard({ session, onSignOut }) {
+  const [tab, setTab] = useState('queue')
+  const [uploads, setUploads] = useState([])
+  const [artists, setArtists] = useState([])
+  const [fans, setFans] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [form, setForm] = useState({ name:'', email:'', genre:'', bio:'' })
+  const [formMsg, setFormMsg] = useState('')
+
+  useEffect(() => {
+    if (tab === 'queue') loadQueue()
+    if (tab === 'artists') loadArtists()
+    if (tab === 'fans') loadFans()
+  }, [tab])
+
+  async function loadQueue() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('image_uploads')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+    setUploads(data || [])
+    setLoading(false)
+  }
+
+  async function loadArtists() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('artists')
+      .select('*')
+      .order('created_at', { ascending: false })
+    setArtists(data || [])
+    setLoading(false)
+  }
+
+  async function loadFans() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('fans')
+      .select('*')
+      .order('created_at', { ascending: false })
+    setFans(data || [])
+    setLoading(false)
+  }
+
+  async function approveImage(upload) {
+    await supabase.from('image_uploads').update({
+      status: 'approved',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: session.user.id
+    }).eq('id', upload.id)
+    if (upload.upload_type === 'profile') {
+      await supabase.from('artists').update({
+        profile_image: upload.file_url,
+        image_status: 'approved'
+      }).eq('user_id', upload.user_id)
+    }
+    loadQueue()
+  }
+
+  async function rejectImage(upload) {
+    const reason = prompt('Reason for rejection (optional):') || 'Did not meet community guidelines'
+    await supabase.from('image_uploads').update({
+      status: 'rejected',
+      rejected_reason: reason,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: session.user.id
+    }).eq('id', upload.id)
+    await supabase.storage.from(upload.bucket).remove([upload.file_path])
+    loadQueue()
+  }
+
+  async function createArtist() {
+    if (!form.name || !form.email) { setFormMsg('Name and email are required'); return }
+    setLoading(true)
+    setFormMsg('')
+    const tempPassword = Math.random().toString(36).slice(-10) + 'A1!'
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email: form.email,
+      password: tempPassword,
+      email_confirm: true
+    })
+    if (authError) { setFormMsg('Error: ' + authError.message); setLoading(false); return }
+    const { error: artistError } = await supabase.from('artists').insert({
+      user_id: authData.user.id,
+      name: form.name,
+      genre: form.genre,
+      bio: form.bio,
+      points: 0,
+      verified: false,
+      paid: false,
+      status: 'active'
+    })
+    if (artistError) { setFormMsg('Error: ' + artistError.message); setLoading(false); return }
+    setFormMsg(`Artist created! They can log in with ${form.email} and reset their password.`)
+    setForm({ name:'', email:'', genre:'', bio:'' })
+    setLoading(false)
+  }
+
   async function changePassword() {
-    const newPassword = prompt('Enter your new password (min 6 characters):')
+    const newPassword = prompt('Enter new admin password (min 6 characters):')
     if (!newPassword) return
     const { error } = await supabase.auth.updateUser({ password: newPassword })
     if (error) { alert('Error: ' + error.message); return }
-    alert('Password updated successfully! You can now log in with this password.')
+    alert('Password updated successfully!')
+  }
+
+  const T = {
+    root:{minHeight:'100vh',background:'#05070a',fontFamily:'monospace',color:'#fff'},
+    header:{borderBottom:'1px solid #111',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center'},
+    logo:{fontSize:11,letterSpacing:3,color:'#b4ff3c'},
+    email:{fontSize:10,color:'#333'},
+    nav:{display:'flex',gap:0,borderBottom:'1px solid #111'},
+    navBtn:{background:'transparent',border:'none',borderBottom:'2px solid transparent',color:'#444',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',padding:'12px 20px'},
+    navActive:{color:'#b4ff3c',borderBottom:'2px solid #b4ff3c'},
+    body:{padding:'24px'},
+    card:{border:'1px solid #111',borderRadius:4,padding:'16px',marginBottom:12,display:'flex',gap:16,alignItems:'flex-start'},
+    img:{width:80,height:80,objectFit:'cover',borderRadius:4,border:'1px solid #222'},
+    approve:{background:'transparent',border:'1px solid rgba(180,255,60,0.4)',color:'#b4ff3c',padding:'6px 14px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',marginRight:8},
+    reject:{background:'transparent',border:'1px solid rgba(255,45,120,0.4)',color:'#ff2d78',padding:'6px 14px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'},
+    label:{fontSize:9,letterSpacing:2,color:'#333',marginBottom:4},
+    input:{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px 12px',fontSize:11,fontFamily:'monospace',width:'100%',marginBottom:12,boxSizing:'border-box'},
+    textarea:{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px 12px',fontSize:11,fontFamily:'monospace',width:'100%',marginBottom:12,height:80,boxSizing:'border-box'},
+    submitBtn:{background:'transparent',border:'1px solid rgba(180,255,60,0.4)',color:'#b4ff3c',padding:'10px 24px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'},
+    row:{border:'1px solid #111',borderRadius:4,padding:'12px 16px',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center'},
+    badge:{fontSize:9,letterSpacing:1,padding:'3px 8px',borderRadius:2},
   }
 
   return (
-    <div style={{minHeight:'100vh',background:'#05070a',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'monospace',color:'#fff'}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{fontSize:11,letterSpacing:3,color:'#b4ff3c',marginBottom:8}}>ADMIN PORTAL</div>
-        <div style={{fontSize:11,color:'#444',marginBottom:24}}>{session.user.email}</div>
-        <button style={{background:'transparent',border:'1px solid rgba(180,255,60,0.3)',color:'#b4ff3c',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',marginBottom:12,display:'block',width:'100%'}} onClick={changePassword}>
-          SET PASSWORD
-        </button>
-        <button style={{background:'transparent',border:'1px solid rgba(255,255,255,0.1)',color:'#555',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={onSignOut}>
-          SIGN OUT
-        </button>
+    <div style={T.root}>
+      <div style={T.header}>
+        <div>
+          <div style={T.logo}>MUSIC INDUSTRY LEAGUE — ADMIN</div>
+          <div style={T.email}>{session.user.email}</div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button style={{...T.reject,fontSize:9}} onClick={changePassword}>CHANGE PASSWORD</button>
+          <button style={{...T.reject,fontSize:9}} onClick={onSignOut}>SIGN OUT</button>
+        </div>
+      </div>
+
+      <div style={T.nav}>
+        {[['queue','IMAGE QUEUE'],['create','CREATE ARTIST'],['artists','ARTISTS'],['fans','FANS']].map(([id,label])=>(
+          <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
+        ))}
+      </div>
+
+      <div style={T.body}>
+
+        {tab==='queue' && (
+          <div>
+            <div style={{fontSize:10,color:'#333',marginBottom:16,letterSpacing:2}}>PENDING IMAGE APPROVALS — {uploads.length}</div>
+            {loading && <div style={{color:'#333',fontSize:11}}>Loading...</div>}
+            {!loading && uploads.length===0 && <div style={{color:'#333',fontSize:11}}>No pending images</div>}
+            {uploads.map(u=>(
+              <div key={u.id} style={T.card}>
+                <img src={u.file_url} alt="upload" style={T.img} />
+                <div style={{flex:1}}>
+                  <div style={{fontSize:10,color:'#555',marginBottom:4}}>{u.upload_type.toUpperCase()} — {u.bucket}</div>
+                  <div style={{fontSize:10,color:'#333',marginBottom:12}}>{new Date(u.created_at).toLocaleDateString()}</div>
+                  <button style={T.approve} onClick={()=>approveImage(u)}>APPROVE</button>
+                  <button style={T.reject} onClick={()=>rejectImage(u)}>REJECT</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab==='create' && (
+          <div style={{maxWidth:480}}>
+            <div style={{fontSize:10,color:'#333',marginBottom:20,letterSpacing:2}}>CREATE ARTIST ACCOUNT</div>
+            <div style={T.label}>ARTIST NAME *</div>
+            <input style={T.input} value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Artist name" />
+            <div style={T.label}>EMAIL ADDRESS *</div>
+            <input style={T.input} value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="artist@email.com" />
+            <div style={T.label}>GENRE</div>
+            <input style={T.input} value={form.genre} onChange={e=>setForm({...form,genre:e.target.value})} placeholder="Hip-hop, R&B, Pop..." />
+            <div style={T.label}>BIO</div>
+            <textarea style={T.textarea} value={form.bio} onChange={e=>setForm({...form,bio:e.target.value})} placeholder="Artist bio..." />
+            {formMsg && <div style={{fontSize:11,color:formMsg.startsWith('Error')?'#ff2d78':'#b4ff3c',marginBottom:12}}>{formMsg}</div>}
+            <button style={T.submitBtn} onClick={createArtist} disabled={loading}>
+              {loading?'CREATING...':'CREATE ARTIST →'}
+            </button>
+          </div>
+        )}
+
+        {tab==='artists' && (
+          <div>
+            <div style={{fontSize:10,color:'#333',marginBottom:16,letterSpacing:2}}>ALL ARTISTS — {artists.length}</div>
+            {loading && <div style={{color:'#333',fontSize:11}}>Loading...</div>}
+            {artists.map(a=>(
+              <div key={a.id} style={T.row}>
+                <div>
+                  <div style={{fontSize:12,color:'#fff',marginBottom:4}}>{a.name}</div>
+                  <div style={{fontSize:10,color:'#444'}}>{a.genre || 'No genre'} · {a.points || 0} pts</div>
+                </div>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <span style={{...T.badge,background:a.paid?'rgba(180,255,60,0.1)':'rgba(255,45,120,0.1)',color:a.paid?'#b4ff3c':'#ff2d78'}}>{a.paid?'PAID':'UNPAID'}</span>
+                  <span style={{...T.badge,background:'rgba(255,255,255,0.05)',color:'#444'}}>{a.status||'active'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab==='fans' && (
+          <div>
+            <div style={{fontSize:10,color:'#333',marginBottom:16,letterSpacing:2}}>ALL FANS — {fans.length}</div>
+            {loading && <div style={{color:'#333',fontSize:11}}>Loading...</div>}
+            {fans.map(f=>(
+              <div key={f.id} style={T.row}>
+                <div>
+                  <div style={{fontSize:12,color:'#fff',marginBottom:4}}>{f.username||'No username'}</div>
+                  <div style={{fontSize:10,color:'#444'}}>{f.coins||0} coins</div>
+                </div>
+                <span style={{...T.badge,background:'rgba(180,255,60,0.05)',color:'#333'}}>FAN</span>
+              </div>
+            ))}
+          </div>
+        )}
+
       </div>
     </div>
   )
