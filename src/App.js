@@ -511,10 +511,16 @@ function ArtistDashboard({ session, onSignOut }) {
   async function addChart() {
     if (!chartForm.chart_name || !chartForm.project_name || !chartForm.peak_position) { setChartMsg('All fields required'); return }
     setChartMsg('')
-    const { error } = await supabase.from('chart_entries').insert({ artist_id: artist.id, chart_name: chartForm.chart_name, project_name: chartForm.project_name, peak_position: parseInt(chartForm.peak_position) })
+    const pos = parseInt(chartForm.peak_position)
+    let pts = 75
+    if (pos === 1) pts = 300
+    else if (pos <= 10) pts = 150
+    const { error } = await supabase.from('chart_entries').insert({ artist_id: artist.id, chart_name: chartForm.chart_name, project_name: chartForm.project_name, peak_position: pos, points: pts })
     if (error) { setChartMsg('Error: ' + error.message); return }
+    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('id', artist.id)
     setChartForm({ chart_name:'', project_name:'', peak_position:'' })
-    setChartMsg('Chart entry added!')
+    setChartMsg(`Chart entry added! +${pts} pts`)
+    loadArtist()
     loadCharts()
   }
 
@@ -531,10 +537,13 @@ function ArtistDashboard({ session, onSignOut }) {
   async function addAward() {
     if (!awardForm.award_name || !awardForm.category || !awardForm.year) { setAwardMsg('All fields required'); return }
     setAwardMsg('')
-    const { error } = await supabase.from('awards').insert({ artist_id: artist.id, ...awardForm, year: parseInt(awardForm.year) })
+    const pts = awardForm.type === 'win' ? 250 : 100
+    const { error } = await supabase.from('awards').insert({ artist_id: artist.id, ...awardForm, year: parseInt(awardForm.year), points: pts })
     if (error) { setAwardMsg('Error: ' + error.message); return }
+    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('id', artist.id)
     setAwardForm({ award_name:'', category:'', type:'win', year: new Date().getFullYear() })
-    setAwardMsg('Award added!')
+    setAwardMsg(`Award added! +${pts} pts`)
+    loadArtist()
     loadAwards()
   }
 
@@ -585,10 +594,13 @@ function ArtistDashboard({ session, onSignOut }) {
   async function addFestival() {
     if (!festivalForm.festival_name || !festivalForm.festival_date) { setFestivalMsg('Festival name and date required'); return }
     setFestivalMsg('')
+    const pts = festivalForm.headlining === true || festivalForm.headlining === 'true' ? 200 : 80
     const { error } = await supabase.from('festival_bookings').insert({ artist_id: artist.id, ...festivalForm })
     if (error) { setFestivalMsg('Error: ' + error.message); return }
+    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('id', artist.id)
     setFestivalForm({ festival_name:'', location:'', festival_date:'', headlining:false })
-    setFestivalMsg('Festival booking added!')
+    setFestivalMsg(`Festival booking added! +${pts} pts`)
+    loadArtist()
     loadFestivals()
   }
 
