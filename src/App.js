@@ -517,7 +517,7 @@ function ArtistDashboard({ session, onSignOut }) {
     else if (pos <= 10) pts = 150
     const { error } = await supabase.from('chart_entries').insert({ artist_id: artist.id, chart_name: chartForm.chart_name, project_name: chartForm.project_name, peak_position: pos, points: pts })
     if (error) { setChartMsg('Error: ' + error.message); return }
-    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('id', artist.id)
+    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('user_id', session.user.id)
     setChartForm({ chart_name:'', project_name:'', peak_position:'' })
     setChartMsg(`Chart entry added! +${pts} pts`)
     loadArtist()
@@ -540,7 +540,7 @@ function ArtistDashboard({ session, onSignOut }) {
     const pts = awardForm.type === 'win' ? 250 : 100
     const { error } = await supabase.from('awards').insert({ artist_id: artist.id, ...awardForm, year: parseInt(awardForm.year), points: pts })
     if (error) { setAwardMsg('Error: ' + error.message); return }
-    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('id', artist.id)
+    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('user_id', session.user.id)
     setAwardForm({ award_name:'', category:'', type:'win', year: new Date().getFullYear() })
     setAwardMsg(`Award added! +${pts} pts`)
     loadArtist()
@@ -597,7 +597,7 @@ function ArtistDashboard({ session, onSignOut }) {
     const pts = festivalForm.headlining === true || festivalForm.headlining === 'true' ? 200 : 80
     const { error } = await supabase.from('festival_bookings').insert({ artist_id: artist.id, ...festivalForm })
     if (error) { setFestivalMsg('Error: ' + error.message); return }
-    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('id', artist.id)
+    await supabase.from('artists').update({ points: (artist.points || 0) + pts }).eq('user_id', session.user.id)
     setFestivalForm({ festival_name:'', location:'', festival_date:'', headlining:false })
     setFestivalMsg(`Festival booking added! +${pts} pts`)
     loadArtist()
@@ -639,12 +639,45 @@ function ArtistDashboard({ session, onSignOut }) {
   return (
     <div style={T.root}>
       <div style={T.header}>
-        <div>
-          <div style={T.logo}>MUSIC INDUSTRY LEAGUE — ARTIST</div>
-          <div style={{fontSize:10,color:'#333'}}>{artist?.name || session.user.email}</div>
+  <div>
+    <div style={T.logo}>MUSIC INDUSTRY LEAGUE — ARTIST</div>
+    <div style={{fontSize:10,color:'#333'}}>{artist?.name || session.user.email}</div>
+  </div>
+  <div style={{display:'flex',gap:16,alignItems:'center'}}>
+    <div style={{textAlign:'right'}}>
+  {(() => {
+    const pts = artist?.points || 0
+    const TIERS = [
+  {name:'NEWCOMER',    min:0,    max:499,    next:'EMERGING',     mult:'×20', color:'#888'},
+  {name:'EMERGING',    min:500,  max:1999,   next:'RISING',       mult:'×10', color:'#b4ff3c'},
+  {name:'RISING',      min:2000, max:4999,   next:'BREAKTHROUGH', mult:'×5',  color:'#ffd60a'},
+  {name:'BREAKTHROUGH',min:5000, max:14999,  next:'ICON',         mult:'×2',  color:'#ff9500'},
+  {name:'ICON',        min:15000,max:Infinity,next:null,          mult:null,  color:'#ff2d78'},
+]
+    const tier = TIERS.filter(t => pts >= t.min).pop()
+    const progress = tier.max === Infinity ? 100 : Math.round(((pts - tier.min) / (tier.max - tier.min + 1)) * 100)
+    return (
+      <div style={{minWidth:220}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+          <span style={{fontSize:10,color:tier.color,letterSpacing:2}}>{tier.name}</span>
+          {tier.next && <span style={{fontSize:9,color:'#333'}}>{tier.next} {tier.mult}</span>}
+          <span style={{fontSize:18,color:'#fff',fontWeight:700,marginLeft:12}}>{pts.toLocaleString()}</span>
         </div>
-        <button style={T.signout} onClick={onSignOut}>SIGN OUT</button>
+        <div style={{background:'#111',borderRadius:2,height:3,width:'100%'}}>
+          <div style={{background:tier.color,height:3,borderRadius:2,width:`${progress}%`,transition:'width 0.5s'}} />
+        </div>
+        {tier.next && (
+          <div style={{fontSize:9,color:'#333',marginTop:3,textAlign:'right'}}>
+            {(tier.max + 1 - pts).toLocaleString()} pts to {tier.next}
+          </div>
+        )}
       </div>
+    )
+  })()}
+</div>
+    <button style={T.signout} onClick={onSignOut}>SIGN OUT</button>
+  </div>
+</div>
 
       <div style={T.nav}>
         {[['profile','PROFILE'],['projects','PROJECTS'],['charts','CHARTS'],['awards','AWARDS'],['festivals','FESTIVALS'],['points','POINTS GUIDE'],['subscription','SUBSCRIPTION']].map(([id,label])=>(
@@ -752,7 +785,9 @@ function ArtistDashboard({ session, onSignOut }) {
               <div key={c.id} style={T.card}>
                 <div>
                   <div style={T.cardTitle}>#{c.peak_position} — {c.chart_name}</div>
-                  <div style={T.cardSub}>{c.project_name}</div>
+<div style={T.cardSub}>{c.project_name}</div>
+<div style={{fontSize:10,color:'#b4ff3c',marginTop:4}}>+{c.points||75} pts</div>
+                  
                 </div>
                 <button style={T.delBtn} onClick={()=>deleteChart(c.id)}>✕</button>
               </div>
@@ -785,7 +820,9 @@ function ArtistDashboard({ session, onSignOut }) {
               <div key={a.id} style={T.card}>
                 <div>
                   <div style={T.cardTitle}>{a.award_name}</div>
-                  <div style={T.cardSub}>{a.category} · {a.year}</div>
+<div style={T.cardSub}>{a.category} · {a.year}</div>
+<div style={{fontSize:10,color:'#b4ff3c',marginTop:4}}>+{a.points||100} pts</div>
+                  
                   <span style={{...T.badge,marginTop:6,display:'inline-block',background:a.type==='win'?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:a.type==='win'?'#b4ff3c':'#555'}}>
                     {a.type.toUpperCase()}
                   </span>
@@ -821,7 +858,9 @@ function ArtistDashboard({ session, onSignOut }) {
               <div key={f.id} style={T.card}>
                 <div>
                   <div style={T.cardTitle}>{f.festival_name}</div>
-                  <div style={T.cardSub}>{f.location} · {f.festival_date}</div>
+<div style={T.cardSub}>{f.location} · {f.festival_date}</div>
+<div style={{fontSize:10,color:'#b4ff3c',marginTop:4}}>{f.headlining?'+200 pts':'+80 pts'}</div>
+                  
                   <span style={{...T.badge,marginTop:6,display:'inline-block',background:f.headlining?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:f.headlining?'#b4ff3c':'#555'}}>
                     {f.headlining?'HEADLINING':'SUPPORTING'}
                   </span>
@@ -840,16 +879,22 @@ function ArtistDashboard({ session, onSignOut }) {
               Points are earned through verified activity across 3 categories. Fan backing multiplies your points based on your tier.
             </div>
 
-            <div style={T.sectionTitle}>TIER MULTIPLIERS</div>
-            {[['NEWCOMER','×1','0 pts'],['EMERGING','×2','500 pts'],['RISING','×5','2,000 pts'],['BREAKTHROUGH','×10','5,000 pts'],['ICON','×20','15,000 pts']].map(([tier,mult,threshold])=>(
-              <div key={tier} style={{...T.card,marginBottom:6}}>
-                <div style={{fontSize:11,color:'#fff',letterSpacing:2}}>{tier}</div>
-                <div style={{display:'flex',gap:16,alignItems:'center'}}>
-                  <span style={{fontSize:10,color:'#444'}}>{threshold}</span>
-                  <span style={{fontSize:14,color:'#b4ff3c',fontWeight:700}}>{mult}</span>
-                </div>
-              </div>
-            ))}
+           <div style={T.sectionTitle}>TIER MULTIPLIERS</div>
+{[
+  ['NEWCOMER',    '0 pts',     'Starting tier'],
+  ['EMERGING',    '500 pts',   'Fans who backed you as NEWCOMER earn ×20'],
+  ['RISING',      '2,000 pts', 'Fans who backed you as EMERGING earn ×10'],
+  ['BREAKTHROUGH','5,000 pts', 'Fans who backed you as RISING earn ×5'],
+  ['ICON',        '15,000 pts','Fans who backed you as BREAKTHROUGH earn ×2'],
+].map(([tier,threshold,desc])=>(
+  <div key={tier} style={{...T.card,marginBottom:6}}>
+    <div style={{flex:1}}>
+      <div style={{fontSize:11,color:'#fff',letterSpacing:2,marginBottom:3}}>{tier}</div>
+      <div style={{fontSize:9,color:'#444'}}>{desc}</div>
+    </div>
+    <div style={{fontSize:10,color:'#333'}}>{threshold}</div>
+  </div>
+))}
 
             <div style={T.divider} />
             <div style={T.sectionTitle}>CHARTS</div>
