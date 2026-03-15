@@ -609,30 +609,45 @@ function ArtistDashboard({ session, onSignOut }) {
     loadFestivals()
   }
 
+  const TIERS = [
+    {name:'NEWCOMER',    min:0,    max:499,    color:'#888888'},
+    {name:'EMERGING',    min:500,  max:1999,   color:'#b4ff3c'},
+    {name:'RISING',      min:2000, max:4999,   color:'#ffd60a'},
+    {name:'BREAKTHROUGH',min:5000, max:14999,  color:'#ff9500'},
+    {name:'ICON',        min:15000,max:Infinity,color:'#ff2d78'},
+  ]
+  const pts = artist?.points || 0
+  const tier = TIERS.filter(t => pts >= t.min).pop() || TIERS[0]
+  const tierColor = tier.color
+  const POINT_COLORS = ['#888888','#b4ff3c','#ffd60a','#ff9500','#ff2d78']
+  function ptColor(n) { return POINT_COLORS[Math.floor(n / 100) % POINT_COLORS.length] }
+  const [, forceUpdate] = useState(0)
+  useEffect(() => { if (artist) forceUpdate(n => n + 1) }, [artist])
+
   const T = {
     root:{ minHeight:'100vh', background:'#05070a', fontFamily:'monospace', color:'#fff' },
-    header:{ borderBottom:'1px solid #111', padding:'16px 24px', display:'flex', justifyContent:'space-between', alignItems:'center' },
-    logo:{ fontSize:11, letterSpacing:3, color:'#b4ff3c' },
+    header:{ borderBottom:`1px solid ${tierColor}22`, padding:'16px 24px', display:'flex', justifyContent:'space-between', alignItems:'center', background:`linear-gradient(180deg, ${tierColor}08 0%, transparent 100%)` },
+    logo:{ fontSize:11, letterSpacing:3, color:tierColor },
     nav:{ display:'flex', gap:0, borderBottom:'1px solid #111', flexWrap:'wrap' },
     navBtn:{ background:'transparent', border:'none', borderBottom:'2px solid transparent', color:'#444', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace', padding:'12px 20px' },
-    navActive:{ color:'#b4ff3c', borderBottom:'2px solid #b4ff3c' },
+    navActive:{ color:tierColor, borderBottom:`2px solid ${tierColor}` },
     body:{ padding:'24px', maxWidth:640 },
     label:{ fontSize:9, letterSpacing:2, color:'#333', marginBottom:4, display:'block' },
     input:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', marginBottom:12, boxSizing:'border-box' },
     select:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', marginBottom:12, boxSizing:'border-box' },
     textarea:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', marginBottom:12, height:100, boxSizing:'border-box' },
-    btn:{ background:'transparent', border:'1px solid rgba(180,255,60,0.4)', color:'#b4ff3c', padding:'10px 24px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace' },
+    btn:{ background:'transparent', border:`1px solid ${tierColor}66`, color:tierColor, padding:'10px 24px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace' },
     delBtn:{ background:'transparent', border:'none', color:'#333', fontSize:10, cursor:'pointer', fontFamily:'monospace', padding:'4px 8px' },
     signout:{ background:'transparent', border:'1px solid rgba(255,255,255,0.1)', color:'#555', padding:'8px 20px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace' },
-    card:{ border:'1px solid #111', borderRadius:4, padding:'14px 16px', marginBottom:10, display:'flex', justifyContent:'space-between', alignItems:'flex-start' },
+    card:{ border:'1px solid #111', borderLeft:`3px solid ${tierColor}44`, borderRadius:4, padding:'14px 16px', marginBottom:10, display:'flex', justifyContent:'space-between', alignItems:'flex-start' },
     cardTitle:{ fontSize:12, color:'#fff', marginBottom:4 },
     cardSub:{ fontSize:10, color:'#444' },
     badge:{ fontSize:9, letterSpacing:1, padding:'3px 8px', borderRadius:2 },
     msg:{ fontSize:11, marginBottom:12 },
     divider:{ borderTop:'1px solid #111', margin:'24px 0' },
     sectionTitle:{ fontSize:9, letterSpacing:3, color:'#333', marginBottom:16 },
-    uploadBox:{ border:'1px dashed #222', borderRadius:4, padding:'16px', textAlign:'center', marginBottom:12, cursor:'pointer', display:'block' },
-    avatar:{ width:72, height:72, borderRadius:4, objectFit:'cover', border:'1px solid #222', marginBottom:10 },
+    uploadBox:{ border:`1px dashed ${tierColor}33`, borderRadius:4, padding:'16px', textAlign:'center', marginBottom:12, cursor:'pointer', display:'block' },
+    avatar:{ width:72, height:72, borderRadius:4, objectFit:'cover', border:`1px solid ${tierColor}44`, marginBottom:10 },
     cover:{ width:48, height:48, borderRadius:3, objectFit:'cover', border:'1px solid #222', marginRight:12, flexShrink:0 },
   }
 
@@ -648,7 +663,7 @@ function ArtistDashboard({ session, onSignOut }) {
   {(() => {
     const pts = artist?.points || 0
     const TIERS = [
-  {name:'NEWCOMER',    min:0,    max:499,    next:'EMERGING',     mult:'×20', color:'#888'},
+  {name:'NEWCOMER',    min:0,    max:499,    next:'EMERGING',     mult:'×20', color:'#888888'},
   {name:'EMERGING',    min:500,  max:1999,   next:'RISING',       mult:'×10', color:'#b4ff3c'},
   {name:'RISING',      min:2000, max:4999,   next:'BREAKTHROUGH', mult:'×5',  color:'#ffd60a'},
   {name:'BREAKTHROUGH',min:5000, max:14999,  next:'ICON',         mult:'×2',  color:'#ff9500'},
@@ -661,7 +676,7 @@ function ArtistDashboard({ session, onSignOut }) {
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
           <span style={{fontSize:10,color:tier.color,letterSpacing:2}}>{tier.name}</span>
           {tier.next && <span style={{fontSize:9,color:'#333'}}>{tier.next} {tier.mult}</span>}
-          <span style={{fontSize:18,color:'#fff',fontWeight:700,marginLeft:12}}>{pts.toLocaleString()}</span>
+          <span style={{fontSize:18,color:ptColor(pts),fontWeight:700,marginLeft:12}}>{pts.toLocaleString()}</span>
         </div>
         <div style={{background:'#111',borderRadius:2,height:3,width:'100%'}}>
           <div style={{background:tier.color,height:3,borderRadius:2,width:`${progress}%`,transition:'width 0.5s'}} />
@@ -775,7 +790,7 @@ function ArtistDashboard({ session, onSignOut }) {
             <input style={T.input} value={chartForm.project_name} onChange={e=>setChartForm({...chartForm,project_name:e.target.value})} placeholder="Song or album name" />
             <label style={T.label}>PEAK POSITION</label>
             <input style={T.input} type="number" min="1" max="200" value={chartForm.peak_position} onChange={e=>setChartForm({...chartForm,peak_position:e.target.value})} placeholder="e.g. 1" />
-            {chartMsg && <div style={{...T.msg,color:chartMsg.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{chartMsg}</div>}
+            {chartMsg && <div style={{...T.msg,color:chartMsg.startsWith('Error')?'#ff2d78':ptColor(pts)}}>{chartMsg}</div>}
             <button style={T.btn} onClick={addChart}>ADD CHART ENTRY →</button>
 
             <div style={T.divider} />
@@ -786,7 +801,7 @@ function ArtistDashboard({ session, onSignOut }) {
                 <div>
                   <div style={T.cardTitle}>#{c.peak_position} — {c.chart_name}</div>
 <div style={T.cardSub}>{c.project_name}</div>
-<div style={{fontSize:10,color:'#b4ff3c',marginTop:4}}>+{c.points||75} pts</div>
+<div style={{fontSize:10,color:ptColor(c.points||75),marginTop:4}}>+{c.points||75} pts</div>
                   
                 </div>
                 <button style={T.delBtn} onClick={()=>deleteChart(c.id)}>✕</button>
@@ -810,7 +825,7 @@ function ArtistDashboard({ session, onSignOut }) {
             </select>
             <label style={T.label}>YEAR</label>
             <input style={T.input} type="number" min="2000" max="2030" value={awardForm.year} onChange={e=>setAwardForm({...awardForm,year:e.target.value})} />
-            {awardMsg && <div style={{...T.msg,color:awardMsg.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{awardMsg}</div>}
+            {awardMsg && <div style={{...T.msg,color:awardMsg.startsWith('Error')?'#ff2d78':ptColor(pts)}}>{awardMsg}</div>}
             <button style={T.btn} onClick={addAward}>ADD AWARD →</button>
 
             <div style={T.divider} />
@@ -821,7 +836,7 @@ function ArtistDashboard({ session, onSignOut }) {
                 <div>
                   <div style={T.cardTitle}>{a.award_name}</div>
 <div style={T.cardSub}>{a.category} · {a.year}</div>
-<div style={{fontSize:10,color:'#b4ff3c',marginTop:4}}>+{a.points||100} pts</div>
+<div style={{fontSize:10,color:ptColor(a.points||100),marginTop:4}}>+{a.points||100} pts</div>
                   
                   <span style={{...T.badge,marginTop:6,display:'inline-block',background:a.type==='win'?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:a.type==='win'?'#b4ff3c':'#555'}}>
                     {a.type.toUpperCase()}
@@ -848,7 +863,7 @@ function ArtistDashboard({ session, onSignOut }) {
               <option value="false">No — Supporting act</option>
               <option value="true">Yes — Headlining</option>
             </select>
-            {festivalMsg && <div style={{...T.msg,color:festivalMsg.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{festivalMsg}</div>}
+            {festivalMsg && <div style={{...T.msg,color:festivalMsg.startsWith('Error')?'#ff2d78':ptColor(pts)}}>{festivalMsg}</div>}
             <button style={T.btn} onClick={addFestival}>ADD FESTIVAL →</button>
 
             <div style={T.divider} />
@@ -859,7 +874,7 @@ function ArtistDashboard({ session, onSignOut }) {
                 <div>
                   <div style={T.cardTitle}>{f.festival_name}</div>
 <div style={T.cardSub}>{f.location} · {f.festival_date}</div>
-<div style={{fontSize:10,color:'#b4ff3c',marginTop:4}}>{f.headlining?'+200 pts':'+80 pts'}</div>
+<div style={{fontSize:10,color:f.headlining?ptColor(200):ptColor(80),marginTop:4}}>{f.headlining?'+200 pts':'+80 pts'}</div>
                   
                   <span style={{...T.badge,marginTop:6,display:'inline-block',background:f.headlining?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:f.headlining?'#b4ff3c':'#555'}}>
                     {f.headlining?'HEADLINING':'SUPPORTING'}
@@ -881,56 +896,56 @@ function ArtistDashboard({ session, onSignOut }) {
 
            <div style={T.sectionTitle}>TIER MULTIPLIERS</div>
 {[
-  ['NEWCOMER',    '0 pts',     'Starting tier'],
-  ['EMERGING',    '500 pts',   'Fans who backed you as NEWCOMER earn ×20'],
-  ['RISING',      '2,000 pts', 'Fans who backed you as EMERGING earn ×10'],
-  ['BREAKTHROUGH','5,000 pts', 'Fans who backed you as RISING earn ×5'],
-  ['ICON',        '15,000 pts','Fans who backed you as BREAKTHROUGH earn ×2'],
-].map(([tier,threshold,desc])=>(
-  <div key={tier} style={{...T.card,marginBottom:6}}>
+  ['NEWCOMER',    '0 pts',     'Starting tier',                              '#888888'],
+  ['EMERGING',    '500 pts',   'Fans who backed you as NEWCOMER earn ×20',   '#b4ff3c'],
+  ['RISING',      '2,000 pts', 'Fans who backed you as EMERGING earn ×10',   '#ffd60a'],
+  ['BREAKTHROUGH','5,000 pts', 'Fans who backed you as RISING earn ×5',      '#ff9500'],
+  ['ICON',        '15,000 pts','Fans who backed you as BREAKTHROUGH earn ×2', '#ff2d78'],
+].map(([tier,threshold,desc,color])=>(
+  <div key={tier} style={{...T.card, marginBottom:6, borderLeft:`3px solid ${color}`}}>
     <div style={{flex:1}}>
-      <div style={{fontSize:11,color:'#fff',letterSpacing:2,marginBottom:3}}>{tier}</div>
+      <div style={{fontSize:11,color:color,letterSpacing:2,marginBottom:3}}>{tier}</div>
       <div style={{fontSize:9,color:'#444'}}>{desc}</div>
     </div>
-    <div style={{fontSize:10,color:'#333'}}>{threshold}</div>
+    <div style={{fontSize:12,color:color,fontWeight:700}}>{threshold}</div>
   </div>
 ))}
 
             <div style={T.divider} />
             <div style={T.sectionTitle}>CHARTS</div>
-            {[['Chart Entry','Any chart appearance','75 pts'],['Chart Top 10','Top 10 on any major chart','150 pts'],['Chart #1','Number one position','300 pts']].map(([name,desc,pts])=>(
-              <div key={name} style={{...T.card,marginBottom:6}}>
-                <div>
-                  <div style={{fontSize:11,color:'#fff'}}>{name}</div>
-                  <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
-                </div>
-                <div style={{fontSize:12,color:'#b4ff3c'}}>{pts}</div>
-              </div>
-            ))}
+            {[['Chart Entry','Any chart appearance','75 pts',75],['Chart Top 10','Top 10 on any major chart','150 pts',150],['Chart #1','Number one position','300 pts',300]].map(([name,desc,label,n])=>(
+  <div key={name} style={{...T.card,marginBottom:6}}>
+    <div>
+      <div style={{fontSize:11,color:'#fff'}}>{name}</div>
+      <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
+    </div>
+    <div style={{fontSize:12,color:ptColor(n)}}>{label}</div>
+  </div>
+))}
 
             <div style={T.divider} />
             <div style={T.sectionTitle}>AWARDS</div>
-            {[['Award Nomination','Any major award nomination','100 pts'],['Award Win','Any major award win','250 pts']].map(([name,desc,pts])=>(
-              <div key={name} style={{...T.card,marginBottom:6}}>
-                <div>
-                  <div style={{fontSize:11,color:'#fff'}}>{name}</div>
-                  <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
-                </div>
-                <div style={{fontSize:12,color:'#b4ff3c'}}>{pts}</div>
-              </div>
-            ))}
+            {[['Award Nomination','Any major award nomination','100 pts',100],['Award Win','Any major award win','250 pts',250]].map(([name,desc,label,n])=>(
+  <div key={name} style={{...T.card,marginBottom:6}}>
+    <div>
+      <div style={{fontSize:11,color:'#fff'}}>{name}</div>
+      <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
+    </div>
+    <div style={{fontSize:12,color:ptColor(n)}}>{label}</div>
+  </div>
+))}
 
             <div style={T.divider} />
             <div style={T.sectionTitle}>FESTIVAL BOOKINGS</div>
-            {[['Supporting Act','Any festival appearance','80 pts'],['Headlining','Headlining a festival','200 pts']].map(([name,desc,pts])=>(
-              <div key={name} style={{...T.card,marginBottom:6}}>
-                <div>
-                  <div style={{fontSize:11,color:'#fff'}}>{name}</div>
-                  <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
-                </div>
-                <div style={{fontSize:12,color:'#b4ff3c'}}>{pts}</div>
-              </div>
-            ))}
+            {[['Supporting Act','Any festival appearance','80 pts',80],['Headlining','Headlining a festival','200 pts',200]].map(([name,desc,label,n])=>(
+  <div key={name} style={{...T.card,marginBottom:6}}>
+    <div>
+      <div style={{fontSize:11,color:'#fff'}}>{name}</div>
+      <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
+    </div>
+    <div style={{fontSize:12,color:ptColor(n)}}>{label}</div>
+  </div>
+))}
 
             <div style={T.divider} />
             <div style={{fontSize:9,color:'#333',lineHeight:1.8}}>
