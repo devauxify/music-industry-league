@@ -226,6 +226,13 @@ function AdminDashboard({ session, onSignOut }) {
         image_status: 'approved'
       }).eq('user_id', upload.user_id)
     }
+    if (upload.upload_type === 'cover') {
+      await supabase.from('projects').update({
+        cover_image: upload.file_url,
+        cover_image_status: 'approved'
+      }).eq('artist_id', (await supabase.from('artists').select('id').eq('user_id', upload.user_id).single()).data?.id)
+      .eq('cover_image', upload.file_url)
+    }
     loadQueue()
   }
 
@@ -238,6 +245,21 @@ function AdminDashboard({ session, onSignOut }) {
       reviewed_by: session.user.id
     }).eq('id', upload.id)
     await supabase.storage.from(upload.bucket).remove([upload.file_path])
+    if (upload.upload_type === 'profile') {
+      await supabase.from('artists').update({
+        profile_image: null,
+        image_status: 'rejected'
+      }).eq('user_id', upload.user_id)
+    }
+    if (upload.upload_type === 'cover') {
+      const { data: artistData } = await supabase.from('artists').select('id').eq('user_id', upload.user_id).single()
+      if (artistData) {
+        await supabase.from('projects').update({
+          cover_image: null,
+          cover_image_status: 'rejected'
+        }).eq('artist_id', artistData.id).eq('cover_image', upload.file_url)
+      }
+    }
     loadQueue()
   }
 
@@ -396,15 +418,376 @@ function AdminDashboard({ session, onSignOut }) {
 }
 
 function ArtistDashboard({ session, onSignOut }) {
+  const [tab, setTab] = useState('profile')
+  const [artist, setArtist] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [form, setForm] = useState({ name:'', genre:'', bio:'' })
+  const [uploading, setUploading] = useState(false)
+
+  // Charts
+  const [charts, setCharts] = useState([])
+  const [chartForm, setChartForm] = useState({ chart_name:'', project_name:'', peak_position:'' })
+  const [chartMsg, setChartMsg] = useState('')
+
+  // Awards
+  const [awards, setAwards] = useState([])
+  const [awardForm, setAwardForm] = useState({ award_name:'', category:'', type:'win', year: new Date().getFullYear() })
+  const [awardMsg, setAwardMsg] = useState('')
+
+  // Projects
+  const [projects, setProjects] = useState([])
+  const [projectForm, setProjectForm] = useState({ title:'', release_type:'album', release_date:'' })
+  const [projectMsg, setProjectMsg] = useState('')
+  const [projectFile, setProjectFile] = useState(null)
+
+  useEffect(() => { loadArtist() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!artist) return
+    if (tab === 'charts') loadCharts()
+    if (tab === 'awards') loadAwards()
+    if (tab === 'projects') loadProjects()
+  }, [tab, artist]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadArtist() {
+    const { data } = await supabase.from('artists').select('*').eq('user_id', session.user.id).single()
+    if (data) { setArtist(data); setForm({ name: data.name||'', genre: data.genre||'', bio: data.bio||'' }) }
+  }
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('artist-image-status')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'artists',
+        filter: `user_id=eq.${session.user.id}`
+      }, () => { loadArtist() })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'projects'
+      }, (payload) => { if (artist) loadProjects() })
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function saveProfile() {
+    setLoading(true); setMessage('')
+    const { error } = await supabase.from('artists').update({ name: form.name, genre: form.genre, bio: form.bio }).eq('user_id', session.user.id)
+    if (error) setMessage('Error: ' + error.message)
+    else { setMessage('Profile saved!'); loadArtist() }
+    setLoading(false)
+  }
+
+  async function uploadProfileImage(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) { setMessage('Image must be under 5MB'); return }
+    setUploading(true); setMessage('')
+    const ext = file.name.split('.').pop()
+    const path = `${session.user.id}/profile-${Date.now()}.${ext}`
+    const { error: uploadError } = await supabase.storage.from('profile-images').upload(path, file)
+    if (uploadError) { setMessage('Upload error: ' + uploadError.message); setUploading(false); return }
+    const { data: urlData } = supabase.storage.from('profile-images').getPublicUrl(path)
+    await supabase.from('image_uploads').insert({ user_id: session.user.id, bucket: 'profile-images', file_path: path, file_url: urlData.publicUrl, upload_type: 'profile', status: 'pending' })
+    await supabase.from('artists').update({ image_status: 'pending' }).eq('user_id', session.user.id)
+    setMessage('Profile image uploaded — pending admin approval.')
+    setUploading(false); loadArtist()
+  }
+
+  async function loadCharts() {
+    const { data } = await supabase.from('chart_entries').select('*').eq('artist_id', artist.id).order('created_at', { ascending: false })
+    setCharts(data || [])
+  }
+
+  async function addChart() {
+    if (!chartForm.chart_name || !chartForm.project_name || !chartForm.peak_position) { setChartMsg('All fields required'); return }
+    setChartMsg('')
+    const { error } = await supabase.from('chart_entries').insert({ artist_id: artist.id, chart_name: chartForm.chart_name, project_name: chartForm.project_name, peak_position: parseInt(chartForm.peak_position) })
+    if (error) { setChartMsg('Error: ' + error.message); return }
+    setChartForm({ chart_name:'', project_name:'', peak_position:'' })
+    setChartMsg('Chart entry added!')
+    loadCharts()
+  }
+
+  async function deleteChart(id) {
+    await supabase.from('chart_entries').delete().eq('id', id)
+    loadCharts()
+  }
+
+  async function loadAwards() {
+    const { data } = await supabase.from('awards').select('*').eq('artist_id', artist.id).order('year', { ascending: false })
+    setAwards(data || [])
+  }
+
+  async function addAward() {
+    if (!awardForm.award_name || !awardForm.category || !awardForm.year) { setAwardMsg('All fields required'); return }
+    setAwardMsg('')
+    const { error } = await supabase.from('awards').insert({ artist_id: artist.id, ...awardForm, year: parseInt(awardForm.year) })
+    if (error) { setAwardMsg('Error: ' + error.message); return }
+    setAwardForm({ award_name:'', category:'', type:'win', year: new Date().getFullYear() })
+    setAwardMsg('Award added!')
+    loadAwards()
+  }
+
+  async function deleteAward(id) {
+    await supabase.from('awards').delete().eq('id', id)
+    loadAwards()
+  }
+
+  async function loadProjects() {
+    const { data } = await supabase.from('projects').select('*').eq('artist_id', artist.id).order('release_date', { ascending: false })
+    setProjects(data || [])
+  }
+
+  async function addProject() {
+    if (!projectForm.title || !projectForm.release_date) { setProjectMsg('Title and release date required'); return }
+    setProjectMsg('')
+    let cover_image = null
+    let cover_image_status = 'none'
+    if (projectFile) {
+      if (projectFile.size > 5 * 1024 * 1024) { setProjectMsg('Image must be under 5MB'); return }
+      const ext = projectFile.name.split('.').pop()
+      const path = `${session.user.id}/cover-${Date.now()}.${ext}`
+      const { error: uploadError } = await supabase.storage.from('album-images').upload(path, projectFile)
+      if (uploadError) { setProjectMsg('Upload error: ' + uploadError.message); return }
+      const { data: urlData } = supabase.storage.from('album-images').getPublicUrl(path)
+      cover_image = urlData.publicUrl
+      cover_image_status = 'pending'
+      await supabase.from('image_uploads').insert({ user_id: session.user.id, bucket: 'album-images', file_path: path, file_url: urlData.publicUrl, upload_type: 'cover', status: 'pending' })
+    }
+    const { error } = await supabase.from('projects').insert({ artist_id: artist.id, ...projectForm, cover_image, cover_image_status })
+    if (error) { setProjectMsg('Error: ' + error.message); return }
+    setProjectForm({ title:'', release_type:'album', release_date:'' })
+    setProjectFile(null)
+    setProjectMsg('Project added!')
+    loadProjects()
+  }
+
+  async function deleteProject(id) {
+    await supabase.from('projects').delete().eq('id', id)
+    loadProjects()
+  }
+
+  const T = {
+    root:{ minHeight:'100vh', background:'#05070a', fontFamily:'monospace', color:'#fff' },
+    header:{ borderBottom:'1px solid #111', padding:'16px 24px', display:'flex', justifyContent:'space-between', alignItems:'center' },
+    logo:{ fontSize:11, letterSpacing:3, color:'#b4ff3c' },
+    nav:{ display:'flex', gap:0, borderBottom:'1px solid #111', flexWrap:'wrap' },
+    navBtn:{ background:'transparent', border:'none', borderBottom:'2px solid transparent', color:'#444', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace', padding:'12px 20px' },
+    navActive:{ color:'#b4ff3c', borderBottom:'2px solid #b4ff3c' },
+    body:{ padding:'24px', maxWidth:640 },
+    label:{ fontSize:9, letterSpacing:2, color:'#333', marginBottom:4, display:'block' },
+    input:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', marginBottom:12, boxSizing:'border-box' },
+    select:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', marginBottom:12, boxSizing:'border-box' },
+    textarea:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', marginBottom:12, height:100, boxSizing:'border-box' },
+    btn:{ background:'transparent', border:'1px solid rgba(180,255,60,0.4)', color:'#b4ff3c', padding:'10px 24px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace' },
+    delBtn:{ background:'transparent', border:'none', color:'#333', fontSize:10, cursor:'pointer', fontFamily:'monospace', padding:'4px 8px' },
+    signout:{ background:'transparent', border:'1px solid rgba(255,255,255,0.1)', color:'#555', padding:'8px 20px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace' },
+    card:{ border:'1px solid #111', borderRadius:4, padding:'14px 16px', marginBottom:10, display:'flex', justifyContent:'space-between', alignItems:'flex-start' },
+    cardTitle:{ fontSize:12, color:'#fff', marginBottom:4 },
+    cardSub:{ fontSize:10, color:'#444' },
+    badge:{ fontSize:9, letterSpacing:1, padding:'3px 8px', borderRadius:2 },
+    msg:{ fontSize:11, marginBottom:12 },
+    divider:{ borderTop:'1px solid #111', margin:'24px 0' },
+    sectionTitle:{ fontSize:9, letterSpacing:3, color:'#333', marginBottom:16 },
+    uploadBox:{ border:'1px dashed #222', borderRadius:4, padding:'16px', textAlign:'center', marginBottom:12, cursor:'pointer', display:'block' },
+    avatar:{ width:72, height:72, borderRadius:4, objectFit:'cover', border:'1px solid #222', marginBottom:10 },
+    cover:{ width:48, height:48, borderRadius:3, objectFit:'cover', border:'1px solid #222', marginRight:12, flexShrink:0 },
+  }
+
   return (
-    <div style={{minHeight:'100vh',background:'#05070a',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'monospace',color:'#fff'}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{fontSize:11,letterSpacing:3,color:'#b4ff3c',marginBottom:8}}>ARTIST PORTAL</div>
-        <div style={{fontSize:11,color:'#444',marginBottom:24}}>{session.user.email}</div>
-        <div style={{color:'#333',fontSize:11,marginBottom:24}}>Artist dashboard coming next session</div>
-        <button style={{background:'transparent',border:'1px solid rgba(255,255,255,0.1)',color:'#555',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={onSignOut}>
-          SIGN OUT
-        </button>
+    <div style={T.root}>
+      <div style={T.header}>
+        <div>
+          <div style={T.logo}>MUSIC INDUSTRY LEAGUE — ARTIST</div>
+          <div style={{fontSize:10,color:'#333'}}>{artist?.name || session.user.email}</div>
+        </div>
+        <button style={T.signout} onClick={onSignOut}>SIGN OUT</button>
+      </div>
+
+      <div style={T.nav}>
+        {[['profile','PROFILE'],['projects','PROJECTS'],['charts','CHARTS'],['awards','AWARDS'],['subscription','SUBSCRIPTION']].map(([id,label])=>(
+          <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
+        ))}
+      </div>
+
+      <div style={T.body}>
+
+        {/* ── PROFILE ── */}
+        {tab==='profile' && (
+          <div>
+            <div style={T.sectionTitle}>YOUR PROFILE</div>
+            {artist?.profile_image
+              ? <img src={artist.profile_image} alt="profile" style={T.avatar} />
+              : <div style={{...T.avatar, background:'#111', display:'flex', alignItems:'center', justifyContent:'center', color:'#333', fontSize:9}}>NO PHOTO</div>
+            }
+            <div style={{fontSize:9,color:'#333',marginBottom:16}}>
+              {artist?.image_status==='approved'?'✓ Photo approved':artist?.image_status==='pending'?'⏳ Photo pending approval':artist?.image_status==='rejected'?'✗ Photo rejected — upload a new one':'No photo uploaded'}
+            </div>
+            <label style={T.label}>ARTIST NAME</label>
+            <input style={T.input} value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Your artist name" />
+            <label style={T.label}>GENRE</label>
+            <input style={T.input} value={form.genre} onChange={e=>setForm({...form,genre:e.target.value})} placeholder="Hip-hop, R&B, Pop..." />
+            <label style={T.label}>BIO</label>
+            <textarea style={T.textarea} value={form.bio} onChange={e=>setForm({...form,bio:e.target.value})} placeholder="Tell fans about yourself..." />
+            {message && <div style={{...T.msg,color:message.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{message}</div>}
+            <button style={T.btn} onClick={saveProfile} disabled={loading}>{loading?'SAVING...':'SAVE PROFILE →'}</button>
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>PROFILE PHOTO</div>
+            <label style={T.uploadBox}>
+              <div style={{fontSize:10,color:'#444',marginBottom:4}}>{uploading?'Uploading...':'Click to upload profile photo'}</div>
+              <div style={{fontSize:9,color:'#333'}}>JPG, PNG or WEBP · Max 5MB · Reviewed before going live</div>
+              <input type="file" accept="image/*" style={{display:'none'}} onChange={uploadProfileImage} disabled={uploading} />
+            </label>
+          </div>
+        )}
+
+        {/* ── PROJECTS ── */}
+        {tab==='projects' && (
+          <div>
+            <div style={T.sectionTitle}>DROP A PROJECT</div>
+            <label style={T.label}>TITLE</label>
+            <input style={T.input} value={projectForm.title} onChange={e=>setProjectForm({...projectForm,title:e.target.value})} placeholder="Project title" />
+            <label style={T.label}>RELEASE TYPE</label>
+            <select style={T.select} value={projectForm.release_type} onChange={e=>setProjectForm({...projectForm,release_type:e.target.value})}>
+              <option value="album">Album</option>
+              <option value="ep">EP</option>
+              <option value="single">Single</option>
+              <option value="mixtape">Mixtape</option>
+            </select>
+            <label style={T.label}>RELEASE DATE</label>
+            <input style={T.input} type="date" value={projectForm.release_date} onChange={e=>setProjectForm({...projectForm,release_date:e.target.value})} />
+            <label style={T.label}>COVER IMAGE</label>
+            <label style={T.uploadBox}>
+              <div style={{fontSize:10,color:'#444',marginBottom:4}}>{projectFile?projectFile.name:'Click to upload cover image'}</div>
+              <div style={{fontSize:9,color:'#333'}}>JPG, PNG or WEBP · Max 5MB · Reviewed before going live</div>
+              <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>setProjectFile(e.target.files[0])} />
+            </label>
+            {projectMsg && <div style={{...T.msg,color:projectMsg.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{projectMsg}</div>}
+            <button style={T.btn} onClick={addProject}>ADD PROJECT →</button>
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>YOUR PROJECTS — {projects.length}</div>
+            {projects.length===0 && <div style={{fontSize:11,color:'#333'}}>No projects yet</div>}
+            {projects.map(p=>(
+              <div key={p.id} style={{...T.card, alignItems:'center'}}>
+                <div style={{display:'flex',alignItems:'center'}}>
+                  {p.cover_image
+                    ? <img src={p.cover_image} alt="cover" style={T.cover} />
+                    : <div style={{...T.cover, background:'#111', display:'flex', alignItems:'center', justifyContent:'center', color:'#333', fontSize:8}}>NO ART</div>
+                  }
+                  <div>
+                    <div style={T.cardTitle}>{p.title}</div>
+                    <div style={T.cardSub}>{p.release_type.toUpperCase()} · {p.release_date}</div>
+                    {p.cover_image_status==='pending' && <div style={{fontSize:9,color:'#888',marginTop:3}}>⏳ Cover pending approval</div>}
+{p.cover_image_status==='rejected' && <div style={{fontSize:9,color:'#ff2d78',marginTop:3}}>✗ Cover rejected — upload a new one</div>}
+{p.cover_image_status==='approved' && <div style={{fontSize:9,color:'#b4ff3c',marginTop:3}}>✓ Cover approved</div>}
+                  </div>
+                </div>
+                <button style={T.delBtn} onClick={()=>deleteProject(p.id)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── CHARTS ── */}
+        {tab==='charts' && (
+          <div>
+            <div style={T.sectionTitle}>ADD CHART ENTRY</div>
+            <label style={T.label}>CHART NAME</label>
+            <input style={T.input} value={chartForm.chart_name} onChange={e=>setChartForm({...chartForm,chart_name:e.target.value})} placeholder="Billboard Hot 100, Apple Music..." />
+            <label style={T.label}>PROJECT NAME</label>
+            <input style={T.input} value={chartForm.project_name} onChange={e=>setChartForm({...chartForm,project_name:e.target.value})} placeholder="Song or album name" />
+            <label style={T.label}>PEAK POSITION</label>
+            <input style={T.input} type="number" min="1" max="200" value={chartForm.peak_position} onChange={e=>setChartForm({...chartForm,peak_position:e.target.value})} placeholder="e.g. 1" />
+            {chartMsg && <div style={{...T.msg,color:chartMsg.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{chartMsg}</div>}
+            <button style={T.btn} onClick={addChart}>ADD CHART ENTRY →</button>
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>YOUR CHART ENTRIES — {charts.length}</div>
+            {charts.length===0 && <div style={{fontSize:11,color:'#333'}}>No chart entries yet</div>}
+            {charts.map(c=>(
+              <div key={c.id} style={T.card}>
+                <div>
+                  <div style={T.cardTitle}>#{c.peak_position} — {c.chart_name}</div>
+                  <div style={T.cardSub}>{c.project_name}</div>
+                </div>
+                <button style={T.delBtn} onClick={()=>deleteChart(c.id)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── AWARDS ── */}
+        {tab==='awards' && (
+          <div>
+            <div style={T.sectionTitle}>ADD AWARD</div>
+            <label style={T.label}>AWARD NAME</label>
+            <input style={T.input} value={awardForm.award_name} onChange={e=>setAwardForm({...awardForm,award_name:e.target.value})} placeholder="Grammy, BET Awards..." />
+            <label style={T.label}>CATEGORY</label>
+            <input style={T.input} value={awardForm.category} onChange={e=>setAwardForm({...awardForm,category:e.target.value})} placeholder="Best New Artist, Album of the Year..." />
+            <label style={T.label}>TYPE</label>
+            <select style={T.select} value={awardForm.type} onChange={e=>setAwardForm({...awardForm,type:e.target.value})}>
+              <option value="win">Win</option>
+              <option value="nomination">Nomination</option>
+            </select>
+            <label style={T.label}>YEAR</label>
+            <input style={T.input} type="number" min="2000" max="2030" value={awardForm.year} onChange={e=>setAwardForm({...awardForm,year:e.target.value})} />
+            {awardMsg && <div style={{...T.msg,color:awardMsg.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{awardMsg}</div>}
+            <button style={T.btn} onClick={addAward}>ADD AWARD →</button>
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>YOUR AWARDS — {awards.length}</div>
+            {awards.length===0 && <div style={{fontSize:11,color:'#333'}}>No awards yet</div>}
+            {awards.map(a=>(
+              <div key={a.id} style={T.card}>
+                <div>
+                  <div style={T.cardTitle}>{a.award_name}</div>
+                  <div style={T.cardSub}>{a.category} · {a.year}</div>
+                  <span style={{...T.badge,marginTop:6,display:'inline-block',background:a.type==='win'?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:a.type==='win'?'#b4ff3c':'#555'}}>
+                    {a.type.toUpperCase()}
+                  </span>
+                </div>
+                <button style={T.delBtn} onClick={()=>deleteAward(a.id)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── SUBSCRIPTION ── */}
+        {tab==='subscription' && (
+          <div>
+            <div style={T.sectionTitle}>SUBSCRIPTION</div>
+            <div style={{border:'1px solid #111',borderRadius:4,padding:20,marginBottom:20}}>
+              <div style={{fontSize:10,color:'#555',marginBottom:8}}>CURRENT STATUS</div>
+              <div style={{fontSize:14,color:artist?.paid?'#b4ff3c':'#ff2d78',marginBottom:16,letterSpacing:2}}>
+                {artist?.paid?'✓ ACTIVE':'✗ INACTIVE'}
+              </div>
+              {!artist?.paid && (
+                <div style={{fontSize:11,color:'#444',lineHeight:1.8,marginBottom:16}}>
+                  Your profile is not live yet.<br/>
+                  Subscribe for $60/yr to go live on the platform<br/>
+                  and appear in fan rankings.
+                </div>
+              )}
+              {artist?.paid && (
+                <div style={{fontSize:11,color:'#444',lineHeight:1.8}}>
+                  Your profile is live and visible to fans.<br/>
+                  You are active in the weekly ranking.
+                </div>
+              )}
+            </div>
+            {!artist?.paid && (
+              <button style={T.btn} onClick={()=>alert('Stripe payment coming soon!')}>
+                SUBSCRIBE $60/YR →
+              </button>
+            )}
+          </div>
+        )}
+
       </div>
     </div>
   )
