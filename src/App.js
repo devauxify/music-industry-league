@@ -436,6 +436,10 @@ function ArtistDashboard({ session, onSignOut }) {
   const [awardMsg, setAwardMsg] = useState('')
 
   // Projects
+  // Festivals
+  const [festivals, setFestivals] = useState([])
+  const [festivalForm, setFestivalForm] = useState({ festival_name:'', location:'', festival_date:'', headlining:false })
+  const [festivalMsg, setFestivalMsg] = useState('')
   const [projects, setProjects] = useState([])
   const [projectForm, setProjectForm] = useState({ title:'', release_type:'album', release_date:'' })
   const [projectMsg, setProjectMsg] = useState('')
@@ -447,6 +451,9 @@ function ArtistDashboard({ session, onSignOut }) {
     if (tab === 'charts') loadCharts()
     if (tab === 'awards') loadAwards()
     if (tab === 'projects') loadProjects()
+    if (tab === 'festivals') loadFestivals()
+    
+    
   }, [tab, artist]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadArtist() {
@@ -570,6 +577,26 @@ function ArtistDashboard({ session, onSignOut }) {
     loadProjects()
   }
 
+  async function loadFestivals() {
+    const { data } = await supabase.from('festival_bookings').select('*').eq('artist_id', artist.id).order('festival_date', { ascending: false })
+    setFestivals(data || [])
+  }
+
+  async function addFestival() {
+    if (!festivalForm.festival_name || !festivalForm.festival_date) { setFestivalMsg('Festival name and date required'); return }
+    setFestivalMsg('')
+    const { error } = await supabase.from('festival_bookings').insert({ artist_id: artist.id, ...festivalForm })
+    if (error) { setFestivalMsg('Error: ' + error.message); return }
+    setFestivalForm({ festival_name:'', location:'', festival_date:'', headlining:false })
+    setFestivalMsg('Festival booking added!')
+    loadFestivals()
+  }
+
+  async function deleteFestival(id) {
+    await supabase.from('festival_bookings').delete().eq('id', id)
+    loadFestivals()
+  }
+
   const T = {
     root:{ minHeight:'100vh', background:'#05070a', fontFamily:'monospace', color:'#fff' },
     header:{ borderBottom:'1px solid #111', padding:'16px 24px', display:'flex', justifyContent:'space-between', alignItems:'center' },
@@ -608,7 +635,7 @@ function ArtistDashboard({ session, onSignOut }) {
       </div>
 
       <div style={T.nav}>
-        {[['profile','PROFILE'],['projects','PROJECTS'],['charts','CHARTS'],['awards','AWARDS'],['subscription','SUBSCRIPTION']].map(([id,label])=>(
+        {[['profile','PROFILE'],['projects','PROJECTS'],['charts','CHARTS'],['awards','AWARDS'],['festivals','FESTIVALS'],['points','POINTS GUIDE'],['subscription','SUBSCRIPTION']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -754,6 +781,105 @@ function ArtistDashboard({ session, onSignOut }) {
                 <button style={T.delBtn} onClick={()=>deleteAward(a.id)}>✕</button>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── FESTIVALS ── */}
+        {tab==='festivals' && (
+          <div>
+            <div style={T.sectionTitle}>ADD FESTIVAL BOOKING</div>
+            <label style={T.label}>FESTIVAL NAME</label>
+            <input style={T.input} value={festivalForm.festival_name} onChange={e=>setFestivalForm({...festivalForm,festival_name:e.target.value})} placeholder="Coachella, Rolling Loud, SXSW..." />
+            <label style={T.label}>LOCATION</label>
+            <input style={T.input} value={festivalForm.location} onChange={e=>setFestivalForm({...festivalForm,location:e.target.value})} placeholder="City, Country" />
+            <label style={T.label}>DATE</label>
+            <input style={T.input} type="date" value={festivalForm.festival_date} onChange={e=>setFestivalForm({...festivalForm,festival_date:e.target.value})} />
+            <label style={T.label}>HEADLINING?</label>
+            <select style={T.select} value={festivalForm.headlining} onChange={e=>setFestivalForm({...festivalForm,headlining:e.target.value==='true'})}>
+              <option value="false">No — Supporting act</option>
+              <option value="true">Yes — Headlining</option>
+            </select>
+            {festivalMsg && <div style={{...T.msg,color:festivalMsg.startsWith('Error')?'#ff2d78':'#b4ff3c'}}>{festivalMsg}</div>}
+            <button style={T.btn} onClick={addFestival}>ADD FESTIVAL →</button>
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>YOUR FESTIVAL BOOKINGS — {festivals.length}</div>
+            {festivals.length===0 && <div style={{fontSize:11,color:'#333'}}>No festival bookings yet</div>}
+            {festivals.map(f=>(
+              <div key={f.id} style={T.card}>
+                <div>
+                  <div style={T.cardTitle}>{f.festival_name}</div>
+                  <div style={T.cardSub}>{f.location} · {f.festival_date}</div>
+                  <span style={{...T.badge,marginTop:6,display:'inline-block',background:f.headlining?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:f.headlining?'#b4ff3c':'#555'}}>
+                    {f.headlining?'HEADLINING':'SUPPORTING'}
+                  </span>
+                </div>
+                <button style={T.delBtn} onClick={()=>deleteFestival(f.id)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── POINTS GUIDE ── */}
+        {tab==='points' && (
+          <div>
+            <div style={T.sectionTitle}>HOW POINTS WORK</div>
+            <div style={{fontSize:11,color:'#444',lineHeight:1.8,marginBottom:20}}>
+              Points are earned through verified activity across 3 categories. Fan backing multiplies your points based on your tier.
+            </div>
+
+            <div style={T.sectionTitle}>TIER MULTIPLIERS</div>
+            {[['NEWCOMER','×1','0 pts'],['EMERGING','×2','500 pts'],['RISING','×5','2,000 pts'],['BREAKTHROUGH','×10','5,000 pts'],['ICON','×20','15,000 pts']].map(([tier,mult,threshold])=>(
+              <div key={tier} style={{...T.card,marginBottom:6}}>
+                <div style={{fontSize:11,color:'#fff',letterSpacing:2}}>{tier}</div>
+                <div style={{display:'flex',gap:16,alignItems:'center'}}>
+                  <span style={{fontSize:10,color:'#444'}}>{threshold}</span>
+                  <span style={{fontSize:14,color:'#b4ff3c',fontWeight:700}}>{mult}</span>
+                </div>
+              </div>
+            ))}
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>CHARTS</div>
+            {[['Chart Entry','Any chart appearance','75 pts'],['Chart Top 10','Top 10 on any major chart','150 pts'],['Chart #1','Number one position','300 pts']].map(([name,desc,pts])=>(
+              <div key={name} style={{...T.card,marginBottom:6}}>
+                <div>
+                  <div style={{fontSize:11,color:'#fff'}}>{name}</div>
+                  <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
+                </div>
+                <div style={{fontSize:12,color:'#b4ff3c'}}>{pts}</div>
+              </div>
+            ))}
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>AWARDS</div>
+            {[['Award Nomination','Any major award nomination','100 pts'],['Award Win','Any major award win','250 pts']].map(([name,desc,pts])=>(
+              <div key={name} style={{...T.card,marginBottom:6}}>
+                <div>
+                  <div style={{fontSize:11,color:'#fff'}}>{name}</div>
+                  <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
+                </div>
+                <div style={{fontSize:12,color:'#b4ff3c'}}>{pts}</div>
+              </div>
+            ))}
+
+            <div style={T.divider} />
+            <div style={T.sectionTitle}>FESTIVAL BOOKINGS</div>
+            {[['Supporting Act','Any festival appearance','80 pts'],['Headlining','Headlining a festival','200 pts']].map(([name,desc,pts])=>(
+              <div key={name} style={{...T.card,marginBottom:6}}>
+                <div>
+                  <div style={{fontSize:11,color:'#fff'}}>{name}</div>
+                  <div style={{fontSize:9,color:'#444',marginTop:2}}>{desc}</div>
+                </div>
+                <div style={{fontSize:12,color:'#b4ff3c'}}>{pts}</div>
+              </div>
+            ))}
+
+            <div style={T.divider} />
+            <div style={{fontSize:9,color:'#333',lineHeight:1.8}}>
+              Points are verified by admin before being added to your total.<br/>
+              Fan backing multipliers apply to all points earned while fans are backing you.
+            </div>
           </div>
         )}
 
