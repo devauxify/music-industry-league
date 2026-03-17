@@ -176,6 +176,9 @@ function AdminDashboard({ session, onSignOut }) {
   const [seasons, setSeasons] = useState([])
   const [activeSeason, setActiveSeason] = useState(null)
   const [leagueGames, setLeagueGames] = useState([])
+  const [gamesPage, setGamesPage] = useState(0)
+  const [gamesFilter, setGamesFilter] = useState({ artist:'', date:'' })
+  const [gamesTotal, setGamesTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ name:'', email:'', genre:'', bio:'' })
   const [formMsg, setFormMsg] = useState('')
@@ -184,7 +187,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (tab === 'queue') loadQueue()
     if (tab === 'artists') loadArtists()
     if (tab === 'fans') loadFans()
-    if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(); }
+    if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(0, gamesFilter); }
   }, [tab])
 
   async function loadQueue() {
@@ -225,15 +228,20 @@ function AdminDashboard({ session, onSignOut }) {
     setActiveSeason(active || null)
   }
 
-  async function loadLeagueGames() {
-    const { data, error } = await supabase
+  async function loadLeagueGames(page=0, filter={}) {
+    const from = page * 5
+    const to = from + 4
+    let query = supabase
       .from('games')
-      .select('*, home:home_artist_id(name), away:away_artist_id(name)')
+      .select('*, home:home_artist_id(name), away:away_artist_id(name)', { count: 'exact' })
       .order('scheduled_at', { ascending: false })
-      .limit(20)
+      .range(from, to)
+    if (filter.date) query = query.gte('scheduled_at', filter.date).lte('scheduled_at', filter.date + 'T23:59:59')
+    const { data, count, error } = await query
     if (error) console.log('games error:', error)
-    console.log('games loaded:', data)
     setLeagueGames(data || [])
+    setGamesTotal(count || 0)
+    setGamesPage(page)
   }
 
   async function createSeason() {
@@ -521,9 +529,14 @@ function AdminDashboard({ session, onSignOut }) {
               </div>
             </div>
             <button style={T.submitBtn} onClick={scheduleGame}>SCHEDULE GAME →</button>
-            {leagueGames.length > 0 && (
+            {true && (
               <div style={{marginTop:24}}>
-                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>SCHEDULED GAMES</div>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>SCHEDULED GAMES — {gamesTotal} total</div>
+<div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+  <input type="date" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'6px 10px',fontSize:10,fontFamily:'monospace'}} value={gamesFilter.date} onChange={e=>{const f={...gamesFilter,date:e.target.value};setGamesFilter(f);loadLeagueGames(0,f);}} />
+  <input placeholder="Filter by artist..." style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'6px 10px',fontSize:10,fontFamily:'monospace',minWidth:180}} value={gamesFilter.artist} onChange={e=>{const f={...gamesFilter,artist:e.target.value};setGamesFilter(f);loadLeagueGames(0,f);}} />
+  {(gamesFilter.date||gamesFilter.artist) && <button style={{background:'transparent',border:'1px solid #222',color:'#444',padding:'6px 10px',fontSize:10,fontFamily:'monospace',cursor:'pointer'}} onClick={()=>{setGamesFilter({artist:'',date:''});loadLeagueGames(0,{});}}>CLEAR</button>}
+</div>
                 {leagueGames.map(g=>(
                   <div key={g.id} style={{...T.row,marginBottom:8,flexWrap:'wrap',gap:8}}>
                     <div style={{fontSize:11,color:'#fff',flex:1}}>{g.home?.name} <span style={{color:'#333'}}>vs</span> {g.away?.name}</div>
