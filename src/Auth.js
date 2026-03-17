@@ -48,14 +48,26 @@ export default function Auth({ role, onBack }) {
         })
       }
       if (selectedRole === 'artist') {
-        await supabase.from('artists').insert({
-          user_id: data.user.id,
-          name: username || email.split('@')[0],
-          points: 0,
-          verified: false,
-          paid: false,
-        })
-      }
+  const { data: existing } = await supabase
+    .from('artists')
+    .select('id')
+    .is('user_id', null)
+    .ilike('name', username || email.split('@')[0])
+    .single()
+  if (existing) {
+    await supabase.from('artists').update({ user_id: data.user.id }).eq('id', existing.id)
+  } else {
+    await supabase.from('artists').insert({
+      user_id: data.user.id,
+      name: username || email.split('@')[0],
+      points: 0,
+      verified: false,
+      paid: false,
+      tier: 'rising',
+      salary: 10,
+    })
+  }
+}
       setMessage('Account created! Check your email to confirm, then log in.')
     }
     setLoading(false)

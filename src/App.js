@@ -173,6 +173,8 @@ function AdminDashboard({ session, onSignOut }) {
   const [uploads, setUploads] = useState([])
   const [artists, setArtists] = useState([])
   const [fans, setFans] = useState([])
+  const [seasons, setSeasons] = useState([])
+  const [activeSeason, setActiveSeason] = useState(null)
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ name:'', email:'', genre:'', bio:'' })
   const [formMsg, setFormMsg] = useState('')
@@ -181,6 +183,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (tab === 'queue') loadQueue()
     if (tab === 'artists') loadArtists()
     if (tab === 'fans') loadFans()
+    if (tab === 'league') { loadArtists(); loadSeasons(); }
   }, [tab])
 
   async function loadQueue() {
@@ -212,6 +215,35 @@ function AdminDashboard({ session, onSignOut }) {
       .order('created_at', { ascending: false })
     setFans(data || [])
     setLoading(false)
+  }
+
+  async function loadSeasons() {
+    const { data } = await supabase.from('seasons').select('*').order('created_at', { ascending: false })
+    setSeasons(data || [])
+    const active = (data || []).find(s => s.status === 'active')
+    setActiveSeason(active || null)
+  }
+
+  async function createSeason() {
+    const name = document.getElementById('sname').value
+    const start = document.getElementById('sstart').value
+    const end = document.getElementById('send').value
+    if (!name||!start||!end) { alert('All fields required'); return }
+    const { error } = await supabase.from('seasons').insert({ name, start_date:start, end_date:end, status:'active' })
+    if (error) { alert('Error: ' + error.message); return }
+    await loadSeasons()
+    alert('Season created!')
+  }
+
+  async function scheduleGame() {
+    const home = document.getElementById('ghome').value
+    const away = document.getElementById('gaway').value
+    const time = document.getElementById('gtime').value
+    if (!activeSeason) { alert('Create a season first'); return }
+    if (home === away) { alert('Home and away must be different artists'); return }
+    const { error } = await supabase.from('games').insert({ season_id: activeSeason.id, home_artist_id: home, away_artist_id: away, scheduled_at: time, status:'upcoming' })
+    if (error) { alert('Error: ' + error.message); return }
+    alert('Game scheduled!')
   }
 
   async function approveImage(upload) {
@@ -267,25 +299,20 @@ function AdminDashboard({ session, onSignOut }) {
     if (!form.name || !form.email) { setFormMsg('Name and email are required'); return }
     setLoading(true)
     setFormMsg('')
-    const tempPassword = Math.random().toString(36).slice(-10) + 'A1!'
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email: form.email,
-      password: tempPassword,
-      email_confirm: true
-    })
-    if (authError) { setFormMsg('Error: ' + authError.message); setLoading(false); return }
     const { error: artistError } = await supabase.from('artists').insert({
-      user_id: authData.user.id,
+      user_id: null,
       name: form.name,
       genre: form.genre,
       bio: form.bio,
       points: 0,
       verified: false,
       paid: false,
-      status: 'active'
+      status: 'invited',
+      tier: 'rising',
+      salary: 10,
     })
     if (artistError) { setFormMsg('Error: ' + artistError.message); setLoading(false); return }
-    setFormMsg(`Artist created! They can log in with ${form.email} and reset their password.`)
+    setFormMsg(`Artist profile created! Ask ${form.name} to sign up at ${window.location.origin} using ${form.email} and select Artist role.`)
     setForm({ name:'', email:'', genre:'', bio:'' })
     setLoading(false)
   }
@@ -333,7 +360,7 @@ function AdminDashboard({ session, onSignOut }) {
       </div>
 
       <div style={T.nav}>
-        {[['queue','IMAGE QUEUE'],['create','CREATE ARTIST'],['artists','ARTISTS'],['fans','FANS']].map(([id,label])=>(
+        {[['queue','IMAGE QUEUE'],['create','CREATE ARTIST'],['artists','ARTISTS'],['fans','FANS'],['league','LEAGUE MANAGER']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -412,9 +439,154 @@ function AdminDashboard({ session, onSignOut }) {
           </div>
         )}
 
+        {tab==='league' && (
+          <div>
+            <div style={{fontSize:10,color:'#333',marginBottom:20,letterSpacing:2}}>LEAGUE MANAGER</div>
+
+            {activeSeason && (
+              <div style={{...T.row,marginBottom:20,background:'rgba(180,255,60,0.03)',borderColor:'rgba(180,255,60,0.15)'}}>
+                <div>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>ACTIVE SEASON</div>
+                  <div style={{fontSize:13,color:'#b4ff3c'}}>{activeSeason.name}</div>
+                  <div style={{fontSize:10,color:'#444',marginTop:4}}>{activeSeason.start_date} → {activeSeason.end_date}</div>
+                </div>
+                <button style={{...T.reject,fontSize:9}} onClick={async()=>{
+                  await supabase.from('seasons').update({status:'ended'}).eq('id',activeSeason.id)
+                  loadSeasons()
+                }}>END SEASON</button>
+              </div>
+            )}
+
+            {seasons.length > 0 && (
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>ALL SEASONS</div>
+                {seasons.map(s=>(
+                  <div key={s.id} style={{...T.row,marginBottom:6}}>
+                    <div style={{fontSize:11,color:'#fff'}}>{s.name}</div>
+                    <span style={{fontSize:9,padding:'3px 8px',background:s.status==='active'?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:s.status==='active'?'#b4ff3c':'#444'}}>{s.status.toUpperCase()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{...T.row,marginBottom:20,flexDirection:'column',alignItems:'flex-start',gap:16}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:2}}>CREATE SEASON</div>
+              <input style={T.input} id="sname" placeholder="Season name e.g. Season 1 — 2026" />
+              <div style={{display:'flex',gap:12}}>
+                <div>
+                  <div style={{...T.label,marginBottom:4}}>START DATE</div>
+                  <input style={{...T.input,marginBottom:0}} type="date" id="sstart" />
+                </div>
+                <div>
+                  <div style={{...T.label,marginBottom:4}}>END DATE</div>
+                  <input style={{...T.input,marginBottom:0}} type="date" id="send" />
+                </div>
+              </div>
+              <button style={T.submitBtn} onClick={createSeason}>CREATE SEASON →</button>
+            </div>
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>SET ARTIST TIERS & SALARY</div>
+            <ArtistTierSearch supabase={supabase} />
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12,marginTop:24}}>SCHEDULE A GAME</div>
+            <div style={{display:'flex',gap:12,flexWrap:'wrap',marginBottom:12}}>
+              <div>
+                <div style={T.label}>HOME ARTIST</div>
+                <select id="ghome" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',minWidth:160}}>
+                  {artists.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={T.label}>AWAY ARTIST</div>
+                <select id="gaway" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',minWidth:160}}>
+                  {artists.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={T.label}>DATE & TIME</div>
+                <input type="datetime-local" id="gtime" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace'}} />
+              </div>
+            </div>
+            <button style={T.submitBtn} onClick={scheduleGame}>SCHEDULE GAME →</button>
+          </div>
+        )}
+
       </div>
     </div>
   )
+
+  function ArtistTierSearch({ supabase }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [tier, setTier] = useState('rising')
+  const [salary, setSalary] = useState(10)
+  const [msg, setMsg] = useState('')
+
+  async function search(q) {
+    setQuery(q)
+    if (q.length < 2) { setResults([]); return }
+    const { data } = await supabase.from('artists').select('*').ilike('name', `%${q}%`).limit(5)
+    setResults(data || [])
+  }
+
+  function select(a) {
+    setSelected(a)
+    setTier(a.tier || 'rising')
+    setSalary(a.salary || 10)
+    setResults([])
+    setQuery(a.name)
+    setMsg('')
+  }
+
+  async function save() {
+    if (!selected) return
+    const { error } = await supabase.from('artists').update({ tier, salary }).eq('id', selected.id)
+    if (error) { setMsg('Error: ' + error.message); return }
+    setMsg(`${selected.name} updated — ${tier}, $${salary}`)
+    setSelected(null)
+    setQuery('')
+  }
+
+  const S = {
+    input:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', boxSizing:'border-box' },
+    select:{ background:'#0a0a0a', border:'1px solid #222', color:'#fff', padding:'8px 12px', fontSize:11, fontFamily:'monospace', width:'100%', boxSizing:'border-box', marginTop:8 },
+    result:{ padding:'8px 12px', borderBottom:'1px solid #111', cursor:'pointer', fontSize:11, color:'#fff' },
+    btn:{ background:'transparent', border:'1px solid rgba(180,255,60,0.4)', color:'#b4ff3c', padding:'8px 20px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace', marginTop:8 },
+  }
+
+  return (
+    <div style={{marginBottom:24}}>
+      <div style={{position:'relative'}}>
+        <input style={S.input} value={query} onChange={e=>search(e.target.value)} placeholder="Search artist name..." />
+        {results.length > 0 && (
+          <div style={{position:'absolute',top:'100%',left:0,right:0,background:'#0d0d0d',border:'1px solid #222',zIndex:10}}>
+            {results.map(a=>(
+              <div key={a.id} style={S.result} onClick={()=>select(a)}>
+                {a.name} <span style={{color:'#444',fontSize:10}}>· {a.tier||'rising'} · ${a.salary||10}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {selected && (
+        <div style={{marginTop:12,border:'1px solid #111',padding:16,borderRadius:4}}>
+          <div style={{fontSize:11,color:'#fff',marginBottom:8}}>{selected.name}</div>
+          <select style={S.select} value={tier} onChange={e=>setTier(e.target.value)}>
+            <option value="rising">Rising Star</option>
+            <option value="superstar">Superstar</option>
+          </select>
+          <div style={{display:'flex',gap:8,alignItems:'center',marginTop:8}}>
+            <div style={{fontSize:10,color:'#444'}}>SALARY $</div>
+            <input type="number" min="1" max="50" value={salary} onChange={e=>setSalary(parseInt(e.target.value))} style={{...S.input,width:80}} />
+          </div>
+          <button style={S.btn} onClick={save}>SAVE CHANGES →</button>
+          {msg && <div style={{fontSize:11,color:'#b4ff3c',marginTop:8}}>{msg}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
 }
 
 function ArtistDashboard({ session, onSignOut }) {
@@ -993,15 +1165,328 @@ function ArtistDashboard({ session, onSignOut }) {
 
 // ─── FAN DASHBOARD (placeholder) ────────────────────────────────────────────
 function FanDashboard({ session, onSignOut }) {
+  const [tab, setTab] = useState('league')
+  const [fan, setFan] = useState(null)
+  const [season, setSeason] = useState(null)
+  const [games, setGames] = useState([])
+  const [artists, setArtists] = useState([])
+  const [draft, setDraft] = useState(null)
+  const [draftPicks, setDraftPicks] = useState([])
+  const [standings, setStandings] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [votes, setVotes] = useState({})
+
+  const SALARY_CAP = 100
+  const COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
+
+  useEffect(() => { loadAll() }, [])
+
+  async function loadAll() {
+    setLoading(true)
+    const { data: fanData } = await supabase.from('fans').select('*').eq('user_id', session.user.id).single()
+    setFan(fanData)
+    const { data: seasonData } = await supabase.from('seasons').select('*').eq('status', 'active').single()
+    setSeason(seasonData)
+    const { data: artistData } = await supabase.from('artists').select('*').eq('paid', true).order('points', { ascending: false })
+    setArtists(artistData || [])
+    if (seasonData && fanData) {
+      const { data: draftData } = await supabase.from('drafts').select('*').eq('fan_id', fanData.id).eq('season_id', seasonData.id).single()
+      setDraft(draftData)
+      if (draftData) {
+        const { data: picks } = await supabase.from('draft_picks').select('*, artists(*)').eq('draft_id', draftData.id)
+        setDraftPicks(picks || [])
+      }
+      const { data: gamesData } = await supabase.from('games').select('*, home:home_artist_id(name,points,tier), away:away_artist_id(name,points,tier)').eq('season_id', seasonData.id).order('scheduled_at', { ascending: false }).limit(20)
+      setGames(gamesData || [])
+      const { data: statsData } = await supabase.from('artist_season_stats').select('*, artists(name,tier,salary)').eq('season_id', seasonData.id).order('wins', { ascending: false })
+      setStandings(statsData || [])
+    }
+    setLoading(false)
+  }
+
+  async function castVote(quarterId, gameId, artistId) {
+    if (!fan) return
+    const { error } = await supabase.from('fan_votes').insert({ fan_id: fan.id, game_id: gameId, quarter_id: quarterId, voted_for: artistId })
+    if (!error) setVotes(v => ({ ...v, [quarterId]: artistId }))
+  }
+
+  async function draftArtist(artist, slot) {
+    if (!season || !fan) return
+    const used = draftPicks.reduce((sum, p) => sum + p.salary, 0)
+    if (used + artist.salary > SALARY_CAP) { alert(`Over salary cap! ${SALARY_CAP - used} remaining`); return }
+    if (draftPicks.length >= 6) { alert('Roster full — 5 starters + 1 bench'); return }
+    if (draftPicks.find(p => p.artist_id === artist.id)) { alert('Already on your roster'); return }
+    let currentDraft = draft
+    if (!currentDraft) {
+      const { data } = await supabase.from('drafts').insert({ fan_id: fan.id, season_id: season.id, salary_used: 0 }).select().single()
+      currentDraft = data
+      setDraft(data)
+    }
+    const isStarter = draftPicks.filter(p => p.slot !== 'bench').length < 5
+    await supabase.from('draft_picks').insert({ draft_id: currentDraft.id, artist_id: artist.id, slot: isStarter ? 'starter' : 'bench', salary: artist.salary })
+    await supabase.from('drafts').update({ salary_used: used + artist.salary }).eq('id', currentDraft.id)
+    loadAll()
+  }
+
+  async function removePick(pickId, salary) {
+    await supabase.from('draft_picks').delete().eq('id', pickId)
+    if (draft) await supabase.from('drafts').update({ salary_used: (draft.salary_used || 0) - salary }).eq('id', draft.id)
+    loadAll()
+  }
+
+  const salaryUsed = draftPicks.reduce((sum, p) => sum + (p.salary || 0), 0)
+  const salaryLeft = SALARY_CAP - salaryUsed
+
+  const T = {
+    root: { minHeight:'100vh', background:'#05070a', fontFamily:'monospace', color:'#fff' },
+    header: { borderBottom:'1px solid #111', padding:'16px 24px', display:'flex', justifyContent:'space-between', alignItems:'center', background:'linear-gradient(180deg, rgba(255,45,120,0.06) 0%, transparent 100%)' },
+    nav: { display:'flex', gap:0, borderBottom:'1px solid #111', flexWrap:'wrap', overflowX:'auto' },
+    navBtn: { background:'transparent', border:'none', borderBottom:'2px solid transparent', color:'#444', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace', padding:'12px 16px', whiteSpace:'nowrap' },
+    navActive: { color:'#ff2d78', borderBottom:'2px solid #ff2d78' },
+    body: { padding:'24px', maxWidth:720 },
+    card: { border:'1px solid #111', borderRadius:6, padding:'16px', marginBottom:12 },
+    sectionTitle: { fontSize:9, letterSpacing:3, color:'#333', marginBottom:16 },
+    btn: { background:'transparent', border:'1px solid rgba(255,45,120,0.4)', color:'#ff2d78', padding:'8px 18px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace' },
+    greenBtn: { background:'transparent', border:'1px solid rgba(180,255,60,0.4)', color:'#b4ff3c', padding:'8px 18px', fontSize:10, letterSpacing:2, cursor:'pointer', fontFamily:'monospace' },
+    tag: { fontSize:9, letterSpacing:1, padding:'3px 8px', borderRadius:2, display:'inline-block' },
+  }
+
+  if (loading) return (
+    <div style={{minHeight:'100vh',background:'#05070a',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontFamily:'monospace',letterSpacing:3,fontSize:11}}>
+      LOADING...
+    </div>
+  )
+
   return (
-    <div style={{minHeight:'100vh',background:'#05070a',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'monospace',color:'#fff'}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{fontSize:11,letterSpacing:3,color:'#b4ff3c',marginBottom:8}}>FAN DASHBOARD</div>
-        <div style={{fontSize:11,color:'#444',marginBottom:24}}>{session.user.email}</div>
-        <div style={{color:'#333',fontSize:11,marginBottom:24}}>Fan dashboard coming next session</div>
-        <button style={{background:'transparent',border:'1px solid rgba(255,255,255,0.1)',color:'#555',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={onSignOut}>
-          SIGN OUT
-        </button>
+    <div style={T.root}>
+      <div style={T.header}>
+        <div>
+          <div style={{fontSize:11,letterSpacing:3,color:'#ff2d78'}}>MUSIC INDUSTRY LEAGUE</div>
+          <div style={{fontSize:10,color:'#333',marginTop:2}}>{fan?.username || session.user.email}</div>
+        </div>
+        <div style={{display:'flex',gap:16,alignItems:'center'}}>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:2}}>COINS</div>
+            <div style={{fontSize:18,color:'#ffd60a',fontWeight:700}}>{fan?.coins || 0}</div>
+          </div>
+          <button style={{background:'transparent',border:'1px solid rgba(255,255,255,0.1)',color:'#555',padding:'8px 16px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={onSignOut}>SIGN OUT</button>
+        </div>
+      </div>
+
+      <div style={T.nav}>
+        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['shootout','SHOOTOUT']].map(([id,label])=>(
+          <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
+        ))}
+      </div>
+
+      <div style={T.body}>
+
+        {/* ── THE LEAGUE ── */}
+        {tab==='league' && (
+          <div>
+            <div style={T.sectionTitle}>SEASON STATUS</div>
+            {!season ? (
+              <div style={{...T.card,textAlign:'center',padding:40}}>
+                <div style={{fontSize:14,color:'#333',marginBottom:8}}>No active season</div>
+                <div style={{fontSize:11,color:'#222'}}>Check back when the next season is scheduled</div>
+              </div>
+            ) : (
+              <div style={T.card}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+                  <div style={{fontSize:14,color:'#fff',letterSpacing:2}}>{season.name}</div>
+                  <span style={{...T.tag,background:'rgba(180,255,60,0.1)',color:'#b4ff3c'}}>ACTIVE</span>
+                </div>
+                <div style={{display:'flex',gap:24}}>
+                  <div><div style={{fontSize:9,color:'#333',letterSpacing:2}}>START</div><div style={{fontSize:11,color:'#fff',marginTop:2}}>{season.start_date}</div></div>
+                  <div><div style={{fontSize:9,color:'#333',letterSpacing:2}}>END</div><div style={{fontSize:11,color:'#fff',marginTop:2}}>{season.end_date}</div></div>
+                  <div><div style={{fontSize:9,color:'#333',letterSpacing:2}}>ARTISTS</div><div style={{fontSize:11,color:'#fff',marginTop:2}}>{artists.length}</div></div>
+                  <div><div style={{fontSize:9,color:'#333',letterSpacing:2}}>GAMES</div><div style={{fontSize:11,color:'#fff',marginTop:2}}>{games.length}</div></div>
+                </div>
+              </div>
+            )}
+
+            <div style={{...T.sectionTitle,marginTop:24}}>SUPERSTARS</div>
+            {artists.filter(a=>a.tier==='superstar').map((a,i)=>(
+              <div key={a.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}`}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div>
+                    <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{a.name}</div>
+                    <div style={{fontSize:10,color:'#444'}}>{a.genre || 'No genre'} · {a.points||0} pts</div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontSize:16,color:'#ffd60a',fontWeight:700}}>${a.salary}</div>
+                    <div style={{fontSize:9,color:'#444',marginTop:2}}>SALARY</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {artists.filter(a=>a.tier==='superstar').length===0 && <div style={{fontSize:11,color:'#222',marginBottom:24}}>No superstars yet — admin assigns tiers</div>}
+
+            <div style={{...T.sectionTitle,marginTop:8}}>RISING STARS</div>
+            {artists.filter(a=>a.tier==='rising').map((a,i)=>(
+              <div key={a.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}66`}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div>
+                    <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{a.name}</div>
+                    <div style={{fontSize:10,color:'#444'}}>{a.genre || 'No genre'} · {a.points||0} pts</div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontSize:16,color:'#b4ff3c',fontWeight:700}}>${a.salary}</div>
+                    <div style={{fontSize:9,color:'#444',marginTop:2}}>SALARY</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── MY DRAFT ── */}
+        {tab==='draft' && (
+          <div>
+            <div style={{...T.card,background:'rgba(255,215,0,0.03)',borderColor:'rgba(255,215,0,0.15)',marginBottom:20}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>SALARY CAP</div>
+                  <div style={{fontSize:20,color:'#ffd60a',fontWeight:700}}>${salaryLeft} <span style={{fontSize:11,color:'#444'}}>remaining of ${SALARY_CAP}</span></div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>ROSTER</div>
+                  <div style={{fontSize:20,color:'#fff',fontWeight:700}}>{draftPicks.length}<span style={{fontSize:11,color:'#444'}}>/6</span></div>
+                </div>
+              </div>
+              <div style={{background:'#111',borderRadius:2,height:3,marginTop:12}}>
+                <div style={{background:'#ffd60a',height:3,borderRadius:2,width:`${(salaryUsed/SALARY_CAP)*100}%`,transition:'width 0.4s'}} />
+              </div>
+            </div>
+
+            {draftPicks.length > 0 && (
+              <div style={{marginBottom:24}}>
+                <div style={T.sectionTitle}>YOUR ROSTER</div>
+                {draftPicks.map((p,i)=>(
+                  <div key={p.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}`}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <div>
+                        <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{p.artists?.name}</div>
+                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                          <span style={{...T.tag,background:p.slot==='bench'?'rgba(255,255,255,0.05)':'rgba(255,45,120,0.1)',color:p.slot==='bench'?'#444':'#ff2d78'}}>{p.slot.toUpperCase()}</span>
+                          <span style={{fontSize:10,color:'#444'}}>${p.salary} salary</span>
+                        </div>
+                      </div>
+                      <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontFamily:'monospace',fontSize:16}} onClick={()=>removePick(p.id,p.salary)}>✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={T.sectionTitle}>DRAFT SUPERSTARS</div>
+            {artists.filter(a=>a.tier==='superstar').map((a,i)=>{
+              const picked = draftPicks.find(p=>p.artist_id===a.id)
+              const canAfford = salaryLeft >= a.salary
+              return (
+                <div key={a.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}`,opacity:picked?0.5:1}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                      <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{a.name}</div>
+                      <div style={{fontSize:10,color:'#444'}}>{a.genre||'No genre'} · {a.points||0} pts</div>
+                    </div>
+                    <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                      <div style={{fontSize:16,color:'#ffd60a',fontWeight:700}}>${a.salary}</div>
+                      {picked ? <span style={{...T.tag,background:'rgba(180,255,60,0.1)',color:'#b4ff3c'}}>DRAFTED</span>
+                        : <button style={{...T.btn,opacity:canAfford?1:0.3}} onClick={()=>canAfford&&draftArtist(a,'starter')} disabled={!canAfford}>DRAFT</button>}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+
+            <div style={{...T.sectionTitle,marginTop:16}}>DRAFT RISING STARS</div>
+            {artists.filter(a=>a.tier==='rising').map((a,i)=>{
+              const picked = draftPicks.find(p=>p.artist_id===a.id)
+              const canAfford = salaryLeft >= a.salary
+              return (
+                <div key={a.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}66`}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                      <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{a.name}</div>
+                      <div style={{fontSize:10,color:'#444'}}>{a.genre||'No genre'} · {a.points||0} pts</div>
+                    </div>
+                    <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                      <div style={{fontSize:16,color:'#b4ff3c',fontWeight:700}}>${a.salary}</div>
+                      {picked ? <span style={{...T.tag,background:'rgba(180,255,60,0.1)',color:'#b4ff3c'}}>DRAFTED</span>
+                        : <button style={{...T.greenBtn,opacity:canAfford?1:0.3}} onClick={()=>canAfford&&draftArtist(a,'starter')} disabled={!canAfford}>DRAFT</button>}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* ── GAMES ── */}
+        {tab==='games' && (
+          <div>
+            <div style={T.sectionTitle}>RECENT & UPCOMING GAMES</div>
+            {games.length===0 && <div style={{fontSize:11,color:'#222'}}>No games scheduled yet</div>}
+            {games.map(g=>(
+              <div key={g.id} style={{...T.card,borderLeft:`3px solid ${g.status==='live'?'#ff2d78':g.status==='finished'?'#444':'#333'}`}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                  <span style={{...T.tag,background:g.status==='live'?'rgba(255,45,120,0.15)':g.status==='finished'?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.03)',color:g.status==='live'?'#ff2d78':g.status==='finished'?'#555':'#333'}}>
+                    {g.status.toUpperCase()}
+                  </span>
+                  <div style={{fontSize:10,color:'#333'}}>{g.scheduled_at ? new Date(g.scheduled_at).toLocaleDateString() : 'TBD'}</div>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div style={{flex:1,textAlign:'left'}}>
+                    <div style={{fontSize:13,color:'#fff',marginBottom:3}}>{g.home?.name}</div>
+                    <div style={{fontSize:10,color:'#444'}}>{g.home?.tier?.toUpperCase()}</div>
+                    {g.status==='finished' && <div style={{fontSize:18,color:g.winner_id===g.home_artist_id?'#b4ff3c':'#444',fontWeight:700,marginTop:4}}>{g.home_score}</div>}
+                  </div>
+                  <div style={{padding:'0 16px',color:'#333',fontSize:12,letterSpacing:2}}>VS</div>
+                  <div style={{flex:1,textAlign:'right'}}>
+                    <div style={{fontSize:13,color:'#fff',marginBottom:3}}>{g.away?.name}</div>
+                    <div style={{fontSize:10,color:'#444'}}>{g.away?.tier?.toUpperCase()}</div>
+                    {g.status==='finished' && <div style={{fontSize:18,color:g.winner_id===g.away_artist_id?'#b4ff3c':'#444',fontWeight:700,marginTop:4}}>{g.away_score}</div>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── STANDINGS ── */}
+        {tab==='standings' && (
+          <div>
+            <div style={T.sectionTitle}>SEASON STANDINGS</div>
+            {standings.length===0 && <div style={{fontSize:11,color:'#222'}}>No standings yet — season hasn't started</div>}
+            {standings.map((s,i)=>(
+              <div key={s.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}`}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div style={{display:'flex',gap:16,alignItems:'center'}}>
+                    <div style={{fontSize:18,color:COLORS[i%COLORS.length],fontWeight:700,minWidth:28}}>#{i+1}</div>
+                    <div>
+                      <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{s.artists?.name}</div>
+                      <span style={{...T.tag,background:s.artists?.tier==='superstar'?'rgba(255,215,0,0.1)':'rgba(180,255,60,0.1)',color:s.artists?.tier==='superstar'?'#ffd60a':'#b4ff3c'}}>{s.artists?.tier?.toUpperCase()}</span>
+                    </div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontSize:16,color:'#fff',fontWeight:700}}>{s.wins}W <span style={{color:'#444'}}>{s.losses}L</span></div>
+                    <div style={{fontSize:9,color:'#333',marginTop:2}}>{s.wins+s.losses > 0 ? ((s.wins/(s.wins+s.losses))*100).toFixed(0)+'% WIN RATE' : 'NO GAMES'}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── SHOOTOUT ── */}
+        {tab==='shootout' && (
+          <div style={{textAlign:'center',padding:'40px 0'}}>
+            <div style={{fontSize:11,color:'#ff2d78',letterSpacing:3,marginBottom:8}}>ALBUM SHOOTOUT</div>
+            <div style={{fontSize:11,color:'#333',marginBottom:24}}>Coming soon — shoot albums into fire net or trash can to earn points</div>
+          </div>
+        )}
+
       </div>
     </div>
   )
