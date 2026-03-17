@@ -175,6 +175,7 @@ function AdminDashboard({ session, onSignOut }) {
   const [fans, setFans] = useState([])
   const [seasons, setSeasons] = useState([])
   const [activeSeason, setActiveSeason] = useState(null)
+  const [leagueGames, setLeagueGames] = useState([])
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ name:'', email:'', genre:'', bio:'' })
   const [formMsg, setFormMsg] = useState('')
@@ -183,7 +184,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (tab === 'queue') loadQueue()
     if (tab === 'artists') loadArtists()
     if (tab === 'fans') loadFans()
-    if (tab === 'league') { loadArtists(); loadSeasons(); }
+    if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(); }
   }, [tab])
 
   async function loadQueue() {
@@ -224,6 +225,17 @@ function AdminDashboard({ session, onSignOut }) {
     setActiveSeason(active || null)
   }
 
+  async function loadLeagueGames() {
+    const { data, error } = await supabase
+      .from('games')
+      .select('*, home:home_artist_id(name), away:away_artist_id(name)')
+      .order('scheduled_at', { ascending: false })
+      .limit(20)
+    if (error) console.log('games error:', error)
+    console.log('games loaded:', data)
+    setLeagueGames(data || [])
+  }
+
   async function createSeason() {
     const name = document.getElementById('sname').value
     const start = document.getElementById('sstart').value
@@ -243,6 +255,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (home === away) { alert('Home and away must be different artists'); return }
     const { error } = await supabase.from('games').insert({ season_id: activeSeason.id, home_artist_id: home, away_artist_id: away, scheduled_at: time, status:'upcoming' })
     if (error) { alert('Error: ' + error.message); return }
+    await loadLeagueGames()
     alert('Game scheduled!')
   }
 
@@ -508,6 +521,26 @@ function AdminDashboard({ session, onSignOut }) {
               </div>
             </div>
             <button style={T.submitBtn} onClick={scheduleGame}>SCHEDULE GAME →</button>
+            {leagueGames.length > 0 && (
+              <div style={{marginTop:24}}>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>SCHEDULED GAMES</div>
+                {leagueGames.map(g=>(
+                  <div key={g.id} style={{...T.row,marginBottom:8,flexWrap:'wrap',gap:8}}>
+                    <div style={{fontSize:11,color:'#fff',flex:1}}>{g.home?.name} <span style={{color:'#333'}}>vs</span> {g.away?.name}</div>
+                    <div style={{fontSize:10,color:'#444'}}>{g.scheduled_at ? new Date(g.scheduled_at).toLocaleString() : 'TBD'}</div>
+                    <span style={{fontSize:9,padding:'3px 8px',background:g.status==='live'?'rgba(255,45,120,0.1)':g.status==='finished'?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.03)',color:g.status==='live'?'#ff2d78':g.status==='finished'?'#555':'#444'}}>{g.status.toUpperCase()}</span>
+                    <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={async()=>{
+                      await supabase.from('games').update({status:'live'}).eq('id',g.id)
+                      loadLeagueGames()
+                    }}>GO LIVE</button>
+                    <button style={{...T.reject,padding:'4px 10px',fontSize:9}} onClick={async()=>{
+                      await supabase.from('games').delete().eq('id',g.id)
+                      loadLeagueGames()
+                    }}>DELETE</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
