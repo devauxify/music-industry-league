@@ -318,9 +318,19 @@ function AdminDashboard({ session, onSignOut }) {
       away_score: Math.round(awayTotal),
       winner_id: winnerId
     }).eq('id', gameId)
-    await supabase.from('artist_season_stats').upsert([
-      { artist_id: winnerId, season_id: game.season_id, wins: 1 },
-    ], { onConflict: 'artist_id,season_id', ignoreDuplicates: false })
+    const loserId = winnerId === game.home_artist_id ? game.away_artist_id : game.home_artist_id
+    const { data: winnerStats } = await supabase.from('artist_season_stats').select('*').eq('artist_id', winnerId).eq('season_id', game.season_id).single()
+    const { data: loserStats } = await supabase.from('artist_season_stats').select('*').eq('artist_id', loserId).eq('season_id', game.season_id).single()
+    if (winnerStats) {
+      await supabase.from('artist_season_stats').update({ wins: (winnerStats.wins||0) + 1 }).eq('id', winnerStats.id)
+    } else {
+      await supabase.from('artist_season_stats').insert({ artist_id: winnerId, season_id: game.season_id, wins: 1, losses: 0, tier: 'rising', salary: 10 })
+    }
+    if (loserStats) {
+      await supabase.from('artist_season_stats').update({ losses: (loserStats.losses||0) + 1 }).eq('id', loserStats.id)
+    } else {
+      await supabase.from('artist_season_stats').insert({ artist_id: loserId, season_id: game.season_id, wins: 0, losses: 1, tier: 'rising', salary: 10 })
+    }
     alert(`Game over! Winner calculated. Awarding fan points...`)
     await awardFanPoints(gameId, winnerId)
   }
@@ -1332,7 +1342,7 @@ function FanDashboard({ session, onSignOut }) {
       }
       const { data: gamesData } = await supabase.from('games').select('*, home:home_artist_id(name,points,tier), away:away_artist_id(name,points,tier)').eq('season_id', seasonData.id).order('scheduled_at', { ascending: false }).limit(20)
       setGames(gamesData || [])
-      const { data: statsData } = await supabase.from('artist_season_stats').select('*, artists(name,tier,salary)').eq('season_id', seasonData.id).order('wins', { ascending: false })
+      const { data: statsData } = await supabase.from('artist_season_stats').select('*, artists(name,tier,salary)').eq('season_id', seasonData.id).order('wins', { ascending: false }).order('losses', { ascending: true })
       setStandings(statsData || [])
     }
     setLoading(false)
@@ -1856,7 +1866,8 @@ function FanDashboard({ session, onSignOut }) {
                   </div>
                   <div style={{textAlign:'right'}}>
                     <div style={{fontSize:16,color:'#fff',fontWeight:700}}>{s.wins}W <span style={{color:'#444'}}>{s.losses}L</span></div>
-                    <div style={{fontSize:9,color:'#333',marginTop:2}}>{s.wins+s.losses > 0 ? ((s.wins/(s.wins+s.losses))*100).toFixed(0)+'% WIN RATE' : 'NO GAMES'}</div>
+                   <div style={{fontSize:9,color:'#333',marginTop:2}}>{s.wins+s.losses > 0 ? `${((s.wins/(s.wins+s.losses))*100).toFixed(0)}% WIN RATE · ${s.wins+s.losses} GP` : 'NO GAMES'}</div>
+
                   </div>
                 </div>
               </div>
