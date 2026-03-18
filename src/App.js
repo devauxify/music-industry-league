@@ -176,6 +176,7 @@ function AdminDashboard({ session, onSignOut }) {
   const [seasons, setSeasons] = useState([])
   const [activeSeason, setActiveSeason] = useState(null)
   const [leagueGames, setLeagueGames] = useState([])
+  const [playoffSeries, setPlayoffSeries] = useState([])
   const [gamesPage, setGamesPage] = useState(0)
   const [gamesFilter, setGamesFilter] = useState({ artist:'', date:'' })
   const [gamesTotal, setGamesTotal] = useState(0)
@@ -187,7 +188,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (tab === 'queue') loadQueue()
     if (tab === 'artists') loadArtists()
     if (tab === 'fans') loadFans()
-    if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(0, gamesFilter); }
+    if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(0, gamesFilter); loadPlayoffs(); }
   }, [tab])
 
   async function loadQueue() {
@@ -265,6 +266,88 @@ function AdminDashboard({ session, onSignOut }) {
     if (error) { alert('Error: ' + error.message); return }
     await loadLeagueGames()
     alert('Game scheduled!')
+  }
+
+  async function generatePlayoffs() {
+    if (!activeSeason) { alert('No active season'); return }
+    const { data: stats } = await supabase
+      .from('artist_season_stats')
+      .select('*, artists(name)')
+      .eq('season_id', activeSeason.id)
+      .order('wins', { ascending: false })
+      .limit(16)
+    if (!stats || stats.length < 2) { alert('Need at least 2 artists with season stats'); return }
+    const top16 = stats.slice(0, 16)
+    const series = []
+    for (let i = 0; i < Math.floor(top16.length / 2); i++) {
+      series.push({
+        season_id: activeSeason.id,
+        round: 1,
+        series_number: i + 1,
+        artist1_id: top16[i].artist_id,
+        artist2_id: top16[top16.length - 1 - i].artist_id,
+        status: 'active'
+      })
+    }
+    const { error } = await supabase.from('playoffs').insert(series)
+    if (error) { alert('Error: ' + error.message); return }
+    alert(`Playoffs generated! ${series.length} first round series created.`)
+    loadPlayoffs()
+  }
+
+  async function loadPlayoffs() {
+    if (!activeSeason) return
+    const { data } = await supabase
+      .from('playoffs')
+      .select('*, artist1:artist1_id(name), artist2:artist2_id(name), winner:winner_id(name)')
+      .eq('season_id', activeSeason.id)
+      .order('round')
+      .order('series_number')
+    setPlayoffSeries(data || [])
+  }
+
+  async function recordPlayoffWin(seriesId, artistId) {
+    const { data: series } = await supabase.from('playoffs').select('*').eq('id', seriesId).single()
+    if (!series) return
+    const isArtist1 = artistId === series.artist1_id
+    const field = isArtist1 ? 'artist1_wins' : 'artist2_wins'
+    const current = isArtist1 ? series.artist1_wins : series.artist2_wins
+    const newWins = current + 1
+    if (newWins >= 4) {
+      await supabase.from('playoffs').update({ [field]: newWins, winner_id: artistId, status: 'finished' }).eq('id', seriesId)
+      alert(`${isArtist1 ? series.artist1_id : series.artist2_id} wins the series 4-${isArtist1 ? series.artist2_wins : series.artist1_wins}!`)
+      checkAdvanceRound(series.round, series.season_id)
+    } else {
+      await supabase.from('playoffs').update({ [field]: newWins }).eq('id', seriesId)
+    }
+    loadPlayoffs()
+  }
+
+  async function checkAdvanceRound(round, seasonId) {
+    const { data: allSeries } = await supabase.from('playoffs').select('*').eq('season_id', seasonId).eq('round', round)
+    if (!allSeries) return
+    const allDone = allSeries.every(s => s.status === 'finished')
+    if (!allDone) return
+    const winners = allSeries.map(s => s.winner_id).filter(Boolean)
+    if (winners.length === 1) {
+      alert('🏆 CHAMPION CROWNED!')
+      await supabase.from('seasons').update({ status: 'completed', champion_id: winners[0] }).eq('id', seasonId)
+      return
+    }
+    const nextSeries = []
+    for (let i = 0; i < Math.floor(winners.length / 2); i++) {
+      nextSeries.push({
+        season_id: seasonId,
+        round: round + 1,
+        series_number: i + 1,
+        artist1_id: winners[i * 2],
+        artist2_id: winners[i * 2 + 1],
+        status: 'active'
+      })
+    }
+    await supabase.from('playoffs').insert(nextSeries)
+    alert(`Round ${round + 1} generated!`)
+    loadPlayoffs()
   }
 
   async function goLive(gameId) {
@@ -644,8 +727,40 @@ function AdminDashboard({ session, onSignOut }) {
                     }}>DELETE</button>
                   </div>
                 ))}
-              </div>
+             </div>
             )}
+
+            <div style={{marginTop:32}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>PLAYOFFS</div>
+              <button style={{...T.submitBtn,marginBottom:16}} onClick={generatePlayoffs}>GENERATE PLAYOFFS →</button>
+              {playoffSeries.length===0 && <div style={{fontSize:11,color:'#222'}}>No playoffs yet</div>}
+              {[1,2,3,4].map(round=>{
+                const roundSeries = playoffSeries.filter(s=>s.round===round)
+                if (roundSeries.length===0) return null
+                const roundNames = {1:'FIRST ROUND',2:'SEMIFINALS',3:'CONFERENCE FINALS',4:'CHAMPIONSHIP'}
+                return (
+                  <div key={round} style={{marginBottom:20}}>
+                    <div style={{fontSize:9,color:'#ff2d78',letterSpacing:2,marginBottom:8}}>{roundNames[round]||`ROUND ${round}`}</div>
+                    {roundSeries.map(s=>(
+                      <div key={s.id} style={{...T.row,marginBottom:8,flexWrap:'wrap',gap:8}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:11,color:'#fff'}}>{s.artist1?.name} <span style={{color:'#ff2d78',fontWeight:700}}>{s.artist1_wins}</span> — <span style={{color:'#b4ff3c',fontWeight:700}}>{s.artist2_wins}</span> {s.artist2?.name}</div>
+                          {s.winner && <div style={{fontSize:9,color:'#ffd60a',marginTop:4}}>🏆 {s.winner?.name} wins series</div>}
+                        </div>
+                        {s.status==='active' && (
+                          <div style={{display:'flex',gap:6}}>
+                            <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>recordPlayoffWin(s.id,s.artist1_id)}>+W {s.artist1?.name?.split(' ')[0]}</button>
+                            <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>recordPlayoffWin(s.id,s.artist2_id)}>+W {s.artist2?.name?.split(' ')[0]}</button>
+                          </div>
+                        )}
+                        <span style={{fontSize:9,padding:'3px 8px',background:s.status==='finished'?'rgba(255,255,255,0.05)':'rgba(180,255,60,0.1)',color:s.status==='finished'?'#444':'#b4ff3c'}}>{s.status.toUpperCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+
           </div>
         )}
 
