@@ -1434,6 +1434,7 @@ function FanDashboard({ session, onSignOut }) {
   const [chatInput, setChatInput] = useState('')
   const [pointsFeed, setPointsFeed] = useState([])
   const [voteCounts, setVoteCounts] = useState({})
+  const [playoffBracket, setPlayoffBracket] = useState([])
 
   const SALARY_CAP = 100
   const COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
@@ -1459,6 +1460,10 @@ function FanDashboard({ session, onSignOut }) {
       setGames(gamesData || [])
       const { data: statsData } = await supabase.from('artist_season_stats').select('*, artists(name,tier,salary)').eq('season_id', seasonData.id).order('wins', { ascending: false }).order('losses', { ascending: true })
       setStandings(statsData || [])
+    }
+    if (seasonData) {
+      const { data: bracket } = await supabase.from('playoffs').select('*, artist1:artist1_id(name,tier), artist2:artist2_id(name,tier), winner:winner_id(name)').eq('season_id', seasonData.id).order('round').order('series_number')
+      setPlayoffBracket(bracket || [])
     }
     setLoading(false)
   }
@@ -1632,7 +1637,7 @@ function FanDashboard({ session, onSignOut }) {
       </div>
 
       <div style={T.nav}>
-        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['shootout','SHOOTOUT']].map(([id,label])=>(
+        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -1987,6 +1992,60 @@ function FanDashboard({ session, onSignOut }) {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── PLAYOFFS ── */}
+        {tab==='playoffs' && (
+          <div>
+            <div style={T.sectionTitle}>PLAYOFF BRACKET</div>
+            {playoffBracket.length===0 && (
+              <div style={{...T.card,textAlign:'center',padding:40}}>
+                <div style={{fontSize:14,color:'#333',marginBottom:8}}>Playoffs not started</div>
+                <div style={{fontSize:11,color:'#222'}}>Top 16 artists advance after the regular season</div>
+              </div>
+            )}
+            {[1,2,3,4].map(round=>{
+              const roundSeries = playoffBracket.filter(s=>s.round===round)
+              if (roundSeries.length===0) return null
+              const roundNames = {1:'FIRST ROUND',2:'SEMIFINALS',3:'CONFERENCE FINALS',4:'CHAMPIONSHIP'}
+              return (
+                <div key={round} style={{marginBottom:24}}>
+                  <div style={{fontSize:9,color:'#ff2d78',letterSpacing:3,marginBottom:12}}>{roundNames[round]||`ROUND ${round}`}</div>
+                  {roundSeries.map((s,i)=>(
+                    <div key={s.id} style={{...T.card,borderLeft:`3px solid ${s.status==='finished'?'#333':'#ff2d78'}`,marginBottom:10}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                        <span style={{...T.tag,background:s.status==='finished'?'rgba(255,255,255,0.03)':'rgba(255,45,120,0.1)',color:s.status==='finished'?'#444':'#ff2d78'}}>{s.status==='finished'?'FINISHED':'ACTIVE'}</span>
+                        <span style={{fontSize:9,color:'#333'}}>SERIES {i+1} · BEST OF 7</span>
+                      </div>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:13,color:s.winner_id===s.artist1_id?'#ffd60a':'#fff',marginBottom:3}}>{s.artist1?.name} {s.winner_id===s.artist1_id&&'🏆'}</div>
+                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>{s.artist1?.tier?.toUpperCase()}</div>
+                        </div>
+                        <div style={{textAlign:'center',padding:'0 12px'}}>
+                          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                            <span style={{fontSize:24,color:'#ff2d78',fontWeight:700}}>{s.artist1_wins}</span>
+                            <span style={{fontSize:12,color:'#333'}}>—</span>
+                            <span style={{fontSize:24,color:'#b4ff3c',fontWeight:700}}>{s.artist2_wins}</span>
+                          </div>
+                          <div style={{fontSize:9,color:'#333',marginTop:4}}>WINS</div>
+                        </div>
+                        <div style={{flex:1,textAlign:'right'}}>
+                          <div style={{fontSize:13,color:s.winner_id===s.artist2_id?'#ffd60a':'#fff',marginBottom:3}}>{s.winner_id===s.artist2_id&&'🏆'} {s.artist2?.name}</div>
+                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>{s.artist2?.tier?.toUpperCase()}</div>
+                        </div>
+                      </div>
+                      {s.winner && (
+                        <div style={{marginTop:12,textAlign:'center',fontSize:10,color:'#ffd60a',letterSpacing:2}}>
+                          🏆 {s.winner?.name} WINS THE SERIES
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
           </div>
         )}
 
