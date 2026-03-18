@@ -285,6 +285,72 @@ function AdminDashboard({ session, onSignOut }) {
     loadLeagueGames(gamesPage, gamesFilter)
   }
 
+  async function advanceQuarter(gameId) {
+    const { data: quarters } = await supabase
+      .from('game_quarters')
+      .select('*')
+      .eq('game_id', gameId)
+      .order('quarter_number')
+    if (!quarters) return
+    const liveQ = quarters.find(q => q.status === 'live')
+    const nextQ = quarters.find(q => q.status === 'upcoming')
+    if (liveQ) {
+      await supabase.from('game_quarters').update({ status: 'finished' }).eq('id', liveQ.id)
+    }
+    if (nextQ) {
+      await supabase.from('game_quarters').update({ status: 'live' }).eq('id', nextQ.id)
+      alert(`Q${nextQ.quarter_number} is now live!`)
+    } else {
+      await endGame(gameId, quarters)
+    }
+    loadLeagueGames(gamesPage, gamesFilter)
+  }
+
+  async function endGame(gameId, quarters) {
+    const homeTotal = quarters.reduce((s,q) => s + (q.home_points||0), 0)
+    const awayTotal = quarters.reduce((s,q) => s + (q.away_points||0), 0)
+    const { data: game } = await supabase.from('games').select('*').eq('id', gameId).single()
+    if (!game) return
+    const winnerId = homeTotal >= awayTotal ? game.home_artist_id : game.away_artist_id
+    await supabase.from('games').update({
+      status: 'finished',
+      home_score: Math.round(homeTotal),
+      away_score: Math.round(awayTotal),
+      winner_id: winnerId
+    }).eq('id', gameId)
+    await supabase.from('artist_season_stats').upsert([
+      { artist_id: winnerId, season_id: game.season_id, wins: 1 },
+    ], { onConflict: 'artist_id,season_id', ignoreDuplicates: false })
+    alert(`Game over! Winner calculated. Awarding fan points...`)
+    await awardFanPoints(gameId, winnerId)
+  }
+
+  async function awardFanPoints(gameId, winnerId) {
+    const { data: picks } = await supabase
+      .from('draft_picks')
+      .select('*, drafts(fan_id, season_id)')
+      .eq('artist_id', winnerId)
+    if (!picks) return
+    for (const pick of picks) {
+      const pts = pick.slot === 'bench' ? 5 : 10
+      const fanId = pick.drafts?.fan_id
+      const seasonId = pick.drafts?.season_id
+      if (!fanId || !seasonId) continue
+      const { data: existing } = await supabase
+        .from('fan_season_points')
+        .select('*')
+        .eq('fan_id', fanId)
+        .eq('season_id', seasonId)
+        .single()
+      if (existing) {
+        await supabase.from('fan_season_points').update({ points: existing.points + pts }).eq('id', existing.id)
+      } else {
+        await supabase.from('fan_season_points').insert({ fan_id: fanId, season_id: seasonId, points: pts })
+      }
+    }
+    alert('Fan points awarded!')
+  }
+
   async function approveImage(upload) {
     await supabase.from('image_uploads').update({
       status: 'approved',
@@ -560,7 +626,8 @@ function AdminDashboard({ session, onSignOut }) {
                     <div style={{fontSize:11,color:'#fff',flex:1}}>{g.home?.name} <span style={{color:'#333'}}>vs</span> {g.away?.name}</div>
                     <div style={{fontSize:10,color:'#444'}}>{g.scheduled_at ? new Date(g.scheduled_at).toLocaleString() : 'TBD'}</div>
                     <span style={{fontSize:9,padding:'3px 8px',background:g.status==='live'?'rgba(255,45,120,0.1)':g.status==='finished'?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.03)',color:g.status==='live'?'#ff2d78':g.status==='finished'?'#555':'#444'}}>{g.status.toUpperCase()}</span>
-                    <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>goLive(g.id)}>GO LIVE</button>
+                    {g.status==='upcoming' && <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>goLive(g.id)}>GO LIVE</button>}
+                  {g.status==='live' && <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>advanceQuarter(g.id)}>NEXT QUARTER →</button>}
                     <button style={{...T.reject,padding:'4px 10px',fontSize:9}} onClick={async()=>{
                       await supabase.from('games').delete().eq('id',g.id)
                       loadLeagueGames()
