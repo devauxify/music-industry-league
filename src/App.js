@@ -2020,8 +2020,11 @@ function FanDashboard({ session, onSignOut }) {
                       </div>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                         <div style={{flex:1}}>
-                          <div style={{fontSize:13,color:s.winner_id===s.artist1_id?'#ffd60a':'#fff',marginBottom:3}}>{s.artist1?.name} {s.winner_id===s.artist1_id&&'🏆'}</div>
-                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>{s.artist1?.tier?.toUpperCase()}</div>
+                         <div style={{fontSize:13,color:s.winner_id===s.artist1_id?'#ffd60a':'#fff',marginBottom:3}}>{s.artist1?.name} {s.winner_id===s.artist1_id&&'🏆'}</div>
+                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>
+                            {s.artist1?.tier?.toUpperCase()}
+                            {standings.findIndex(x=>x.artist_id===s.artist1_id)>=0 && ` · #${standings.findIndex(x=>x.artist_id===s.artist1_id)+1} SEED`}
+                          </div>
                         </div>
                         <div style={{textAlign:'center',padding:'0 12px'}}>
                           <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -2032,8 +2035,11 @@ function FanDashboard({ session, onSignOut }) {
                           <div style={{fontSize:9,color:'#333',marginTop:4}}>WINS</div>
                         </div>
                         <div style={{flex:1,textAlign:'right'}}>
-                          <div style={{fontSize:13,color:s.winner_id===s.artist2_id?'#ffd60a':'#fff',marginBottom:3}}>{s.winner_id===s.artist2_id&&'🏆'} {s.artist2?.name}</div>
-                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>{s.artist2?.tier?.toUpperCase()}</div>
+                         <div style={{fontSize:13,color:s.winner_id===s.artist2_id?'#ffd60a':'#fff',marginBottom:3}}>{s.winner_id===s.artist2_id&&'🏆'} {s.artist2?.name}</div>
+                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>
+                            {s.artist2?.tier?.toUpperCase()}
+                            {standings.findIndex(x=>x.artist_id===s.artist2_id)>=0 && ` · #${standings.findIndex(x=>x.artist_id===s.artist2_id)+1} SEED`}
+                          </div>
                         </div>
                       </div>
                       {s.winner && (
