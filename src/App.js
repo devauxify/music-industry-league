@@ -267,6 +267,24 @@ function AdminDashboard({ session, onSignOut }) {
     alert('Game scheduled!')
   }
 
+  async function goLive(gameId) {
+    await supabase.from('games').update({status:'live'}).eq('id', gameId)
+    const now = new Date()
+    for (let q=1; q<=4; q++) {
+      const start = new Date(now.getTime()+(q-1)*12*60*1000)
+      const end = new Date(now.getTime()+q*12*60*1000)
+      const {error} = await supabase.from('game_quarters').insert({
+        game_id: gameId,
+        quarter_number: q,
+        status: q===1?'live':'upcoming',
+        starts_at: start.toISOString(),
+        ends_at: end.toISOString()
+      })
+      if(error) console.log('quarter error:',error)
+    }
+    loadLeagueGames(gamesPage, gamesFilter)
+  }
+
   async function approveImage(upload) {
     await supabase.from('image_uploads').update({
       status: 'approved',
@@ -542,10 +560,7 @@ function AdminDashboard({ session, onSignOut }) {
                     <div style={{fontSize:11,color:'#fff',flex:1}}>{g.home?.name} <span style={{color:'#333'}}>vs</span> {g.away?.name}</div>
                     <div style={{fontSize:10,color:'#444'}}>{g.scheduled_at ? new Date(g.scheduled_at).toLocaleString() : 'TBD'}</div>
                     <span style={{fontSize:9,padding:'3px 8px',background:g.status==='live'?'rgba(255,45,120,0.1)':g.status==='finished'?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.03)',color:g.status==='live'?'#ff2d78':g.status==='finished'?'#555':'#444'}}>{g.status.toUpperCase()}</span>
-                    <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={async()=>{
-                      await supabase.from('games').update({status:'live'}).eq('id',g.id)
-                      loadLeagueGames()
-                    }}>GO LIVE</button>
+                    <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>goLive(g.id)}>GO LIVE</button>
                     <button style={{...T.reject,padding:'4px 10px',fontSize:9}} onClick={async()=>{
                       await supabase.from('games').delete().eq('id',g.id)
                       loadLeagueGames()
@@ -1221,6 +1236,12 @@ function FanDashboard({ session, onSignOut }) {
   const [standings, setStandings] = useState([])
   const [loading, setLoading] = useState(true)
   const [votes, setVotes] = useState({})
+  const [activeGame, setActiveGame] = useState(null)
+  const [quarters, setQuarters] = useState([])
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatInput, setChatInput] = useState('')
+  const [pointsFeed, setPointsFeed] = useState([])
+  const [voteCounts, setVoteCounts] = useState({})
 
   const SALARY_CAP = 100
   const COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
@@ -1250,10 +1271,109 @@ function FanDashboard({ session, onSignOut }) {
     setLoading(false)
   }
 
-  async function castVote(quarterId, gameId, artistId) {
+  async function castVote(quarterId, gameId, artistId, artistName) {
     if (!fan) return
     const { error } = await supabase.from('fan_votes').insert({ fan_id: fan.id, game_id: gameId, quarter_id: quarterId, voted_for: artistId })
-    if (!error) setVotes(v => ({ ...v, [quarterId]: artistId }))
+    if (!error) {
+      setVotes(v => ({ ...v, [quarterId]: artistId }))
+      setPointsFeed(f => [{ id: Date.now(), fan: fan.username, artist: artistName, pts: 10, time: new Date().toLocaleTimeString() }, ...f].slice(0, 50))
+      const isHome = artistId === activeGame.home_artist_id
+      const quarter = quarters.find(q=>q.id===quarterId)
+      if (quarter) {
+        const field = isHome ? 'home_points' : 'away_points'
+        const current = isHome ? (quarter.home_points||0) : (quarter.away_points||0)
+        const {error: qErr} = await supabase.from('game_quarters').update({ [field]: current + 10 }).eq('id', quarterId)
+        if(qErr) console.log('quarter update error:', qErr)
+        setQuarters(qs => qs.map(q => q.id===quarterId ? {...q, [field]: current+10} : q))
+      }
+      await supabase.from('fans').update({ coins: (fan.coins||0) + 10 }).eq('id', fan.id)
+      loadVoteCounts(gameId)
+    }
+  }
+
+  async function loadVoteCounts(gameId) {
+    const { data } = await supabase.from('fan_votes').select('quarter_id, voted_for').eq('game_id', gameId)
+    const counts = {}
+    if (data) {
+      data.forEach(v => {
+        if (!counts[v.quarter_id]) counts[v.quarter_id] = {}
+        counts[v.quarter_id][v.voted_for] = (counts[v.quarter_id][v.voted_for] || 0) + 1
+      })
+    }
+    setVoteCounts(counts)
+  }
+
+  async function openGame(game) {
+    setActiveGame(game)
+    const { data: qs } = await supabase.from('game_quarters').select('*').eq('game_id', game.id).order('quarter_number')
+    setQuarters(qs || [])
+    const { data: chat } = await supabase.from('game_chat').select('*, fans(username)').eq('game_id', game.id).order('created_at', { ascending: false }).limit(50)
+    setChatMessages(chat || [])
+    loadVoteCounts(game.id)
+    const channel = supabase.channel(`game-${game.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'game_chat', filter: `game_id=eq.${game.id}` }, payload => {
+        setChatMessages(m => [payload.new, ...m].slice(0, 50))
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fan_votes', filter: `game_id=eq.${game.id}` }, () => {
+        loadVoteCounts(game.id)
+      })
+      .subscribe()
+    const { data: existingVotes } = await supabase.from('fan_votes').select('quarter_id, voted_for').eq('fan_id', fan.id).eq('game_id', game.id)
+    if (existingVotes) {
+      const voteMap = {}
+      existingVotes.forEach(v => { voteMap[v.quarter_id] = v.voted_for })
+      setVotes(voteMap)
+    }
+  }
+
+  async function sendChat() {
+    if (!chatInput.trim() || !fan || !activeGame) return
+    const msg = chatInput.trim()
+    if (msg.length < 5) { setChatInput(''); return }
+    const activeQuarter = quarters.find(q=>q.status==='live')
+    const backedArtist = activeQuarter ? votes[activeQuarter.id] : null
+    const now = Date.now()
+    const lastComment = fan._lastComment || 0
+    const cooldownPassed = now - lastComment > 60000
+    const isDuplicate = fan._lastMessage === msg
+    const earnPoints = cooldownPassed && !isDuplicate && msg.length >= 5
+    const pts = earnPoints ? 0.25 : 0
+    await supabase.from('game_chat').insert({
+      game_id: activeGame.id,
+      fan_id: fan.id,
+      message: msg,
+      points_earned: pts,
+      voted_for_artist: backedArtist || null
+    })
+    setChatMessages(m => [{
+      id: Date.now(),
+      game_id: activeGame.id,
+      fan_id: fan.id,
+      message: msg,
+      points_earned: pts,
+      voted_for_artist: backedArtist || null,
+      fans: { username: fan.username }
+    }, ...m].slice(0, 50))
+    if (earnPoints) {
+      fan._lastComment = now
+      fan._lastMessage = msg
+      setPointsFeed(f => [{
+        id: Date.now(),
+        fan: fan.username,
+        artist: 'comment',
+        pts: 0.25,
+        time: new Date().toLocaleTimeString()
+      }, ...f].slice(0, 50))
+      if (backedArtist && activeQuarter) {
+        const isHome = backedArtist === activeGame.home_artist_id
+        const field = isHome ? 'home_points' : 'away_points'
+        const quarter = quarters.find(q=>q.id===activeQuarter.id)
+        const current = quarter ? (isHome ? (quarter.home_points||0) : (quarter.away_points||0)) : 0
+        await supabase.from('game_quarters').update({ [field]: current + 0.25 }).eq('id', activeQuarter.id)
+        setQuarters(qs => qs.map(q => q.id===activeQuarter.id ? {...q, [field]: current+0.25} : q))
+      }
+    }
+    setChatInput('')
   }
 
   async function draftArtist(artist, slot) {
@@ -1469,36 +1589,188 @@ function FanDashboard({ session, onSignOut }) {
           </div>
         )}
 
-        {/* ── GAMES ── */}
-        {tab==='games' && (
+       {/* ── GAMES ── */}
+        {tab==='games' && !activeGame && (
           <div>
             <div style={T.sectionTitle}>RECENT & UPCOMING GAMES</div>
             {games.length===0 && <div style={{fontSize:11,color:'#222'}}>No games scheduled yet</div>}
             {games.map(g=>(
-              <div key={g.id} style={{...T.card,borderLeft:`3px solid ${g.status==='live'?'#ff2d78':g.status==='finished'?'#444':'#333'}`}}>
+              <div key={g.id} style={{...T.card,borderLeft:`3px solid ${g.status==='live'?'#ff2d78':g.status==='finished'?'#444':'#333'}`,cursor:g.status==='live'?'pointer':'default'}} onClick={()=>g.status==='live'&&openGame(g)}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
                   <span style={{...T.tag,background:g.status==='live'?'rgba(255,45,120,0.15)':g.status==='finished'?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.03)',color:g.status==='live'?'#ff2d78':g.status==='finished'?'#555':'#333'}}>
-                    {g.status.toUpperCase()}
+                    {g.status==='live'?'🔴 LIVE':g.status.toUpperCase()}
                   </span>
-                  <div style={{fontSize:10,color:'#333'}}>{g.scheduled_at ? new Date(g.scheduled_at).toLocaleDateString() : 'TBD'}</div>
+                  <div style={{fontSize:10,color:'#333'}}>{g.scheduled_at?new Date(g.scheduled_at).toLocaleDateString():'TBD'}</div>
                 </div>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                   <div style={{flex:1,textAlign:'left'}}>
                     <div style={{fontSize:13,color:'#fff',marginBottom:3}}>{g.home?.name}</div>
                     <div style={{fontSize:10,color:'#444'}}>{g.home?.tier?.toUpperCase()}</div>
-                    {g.status==='finished' && <div style={{fontSize:18,color:g.winner_id===g.home_artist_id?'#b4ff3c':'#444',fontWeight:700,marginTop:4}}>{g.home_score}</div>}
+                    {g.status==='finished'&&<div style={{fontSize:18,color:g.winner_id===g.home_artist_id?'#b4ff3c':'#444',fontWeight:700,marginTop:4}}>{g.home_score}</div>}
                   </div>
                   <div style={{padding:'0 16px',color:'#333',fontSize:12,letterSpacing:2}}>VS</div>
                   <div style={{flex:1,textAlign:'right'}}>
                     <div style={{fontSize:13,color:'#fff',marginBottom:3}}>{g.away?.name}</div>
                     <div style={{fontSize:10,color:'#444'}}>{g.away?.tier?.toUpperCase()}</div>
-                    {g.status==='finished' && <div style={{fontSize:18,color:g.winner_id===g.away_artist_id?'#b4ff3c':'#444',fontWeight:700,marginTop:4}}>{g.away_score}</div>}
+                    {g.status==='finished'&&<div style={{fontSize:18,color:g.winner_id===g.away_artist_id?'#b4ff3c':'#444',fontWeight:700,marginTop:4}}>{g.away_score}</div>}
                   </div>
                 </div>
+                {g.status==='live'&&<button style={{background:'rgba(255,45,120,0.1)',border:'1px solid #ff2d78',color:'#ff2d78',padding:'10px',width:'100%',marginTop:12,fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={(e)=>{e.stopPropagation();openGame(g)}}>ENTER ARENA →</button>}
               </div>
             ))}
           </div>
         )}
+
+        {/* ── ARENA ── */}
+        {tab==='games' && activeGame && (
+          <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'#02030a',zIndex:100,overflowY:'auto',fontFamily:'monospace'}}>
+            
+            {/* Header */}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 20px',borderBottom:'1px solid #111'}}>
+              <button style={{background:'transparent',border:'none',color:'#444',cursor:'pointer',fontFamily:'monospace',fontSize:11,letterSpacing:2}} onClick={()=>setActiveGame(null)}>← BACK</button>
+              <div style={{fontSize:10,color:'#ff2d78',letterSpacing:3}}>🔴 LIVE</div>
+              <div style={{fontSize:10,color:'#333',letterSpacing:2}}>48 MINS</div>
+            </div>
+
+            {/* Arena */}
+            <div style={{background:'linear-gradient(180deg,#0a0a1a 0%,#02030a 100%)',padding:'24px 16px',position:'relative'}}>
+              
+              {/* Spotlight effect */}
+              <div style={{position:'absolute',top:0,left:'20%',width:'30%',height:'100%',background:'radial-gradient(ellipse,rgba(255,45,120,0.06) 0%,transparent 70%)',pointerEvents:'none'}} />
+              <div style={{position:'absolute',top:0,right:'20%',width:'30%',height:'100%',background:'radial-gradient(ellipse,rgba(180,255,60,0.06) 0%,transparent 70%)',pointerEvents:'none'}} />
+
+              {/* Artists */}
+              <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:16}}>
+                
+                {/* Home */}
+                <div style={{flex:1,textAlign:'center'}}>
+                  <div style={{width:80,height:80,borderRadius:'50%',background:'linear-gradient(135deg,#ff2d78,#ff9500)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 10px',fontSize:24,fontWeight:700,color:'#fff',border:'3px solid #ff2d78'}}>
+                    {activeGame.home?.name?.charAt(0)}
+                  </div>
+                  <div style={{fontSize:13,color:'#fff',fontWeight:700,marginBottom:4}}>{activeGame.home?.name}</div>
+                  <div style={{fontSize:9,color:'#ff2d78',letterSpacing:2}}>{activeGame.home?.tier?.toUpperCase()}</div>
+                </div>
+
+                {/* Scoreboard */}
+                <div style={{textAlign:'center',padding:'0 8px',minWidth:120}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>SCOREBOARD</div>
+                  {[1,2,3,4].map(q=>{
+                    const quarter = quarters.find(x=>x.quarter_number===q)
+                    const homePoints = quarter ? Math.round((quarter.home_points||0)*100)/100 : 0
+                    const awayPoints = quarter ? Math.round((quarter.away_points||0)*100)/100 : 0
+                    return (
+                      <div key={q} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,background:'rgba(255,255,255,0.03)',padding:'4px 8px',borderRadius:3}}>
+                        <span style={{fontSize:14,color:homePoints>awayPoints?'#ff2d78':'#444',fontWeight:700,minWidth:28}}>{homePoints}</span>
+                        <span style={{fontSize:9,color:quarter?.status==='live'?'#ff2d78':'#333',letterSpacing:1}}>Q{q}{quarter?.status==='live'?' 🔴':''}</span>
+                        <span style={{fontSize:14,color:awayPoints>homePoints?'#b4ff3c':'#444',fontWeight:700,minWidth:28,textAlign:'right'}}>{awayPoints}</span>
+                      </div>
+                    )
+                  })}
+                  <div style={{display:'flex',justifyContent:'space-between',marginTop:8,borderTop:'1px solid #111',paddingTop:8}}>
+                    <span style={{fontSize:20,color:'#ff2d78',fontWeight:700}}>
+                      {quarters.reduce((s,q)=>s+((q.home_points||0)>(q.away_points||0)?1:0),0)}
+                    </span>
+                    <span style={{fontSize:9,color:'#333',letterSpacing:1,alignSelf:'center'}}>QW</span>
+                    <span style={{fontSize:20,color:'#b4ff3c',fontWeight:700}}>
+                      {quarters.reduce((s,q)=>s+((q.away_points||0)>(q.home_points||0)?1:0),0)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Away */}
+                <div style={{flex:1,textAlign:'center'}}>
+                  <div style={{width:80,height:80,borderRadius:'50%',background:'linear-gradient(135deg,#b4ff3c,#1D9E75)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 10px',fontSize:24,fontWeight:700,color:'#05070a',border:'3px solid #b4ff3c'}}>
+                    {activeGame.away?.name?.charAt(0)}
+                  </div>
+                  <div style={{fontSize:13,color:'#fff',fontWeight:700,marginBottom:4}}>{activeGame.away?.name}</div>
+                  <div style={{fontSize:9,color:'#b4ff3c',letterSpacing:2}}>{activeGame.away?.tier?.toUpperCase()}</div>
+                </div>
+              </div>
+
+              {/* Vote buttons */}
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10,textAlign:'center'}}>VOTE FOR YOUR ARTIST — ACTIVE QUARTER</div>
+                {quarters.filter(q=>q.status==='live').slice(0,1).map(q=>(
+                  <div key={q.id} style={{display:'flex',gap:8,marginBottom:8}}>
+                    <button
+                      style={{flex:1,padding:'14px 8px',background:votes[q.id]===activeGame.home_artist_id?'rgba(255,45,120,0.2)':'rgba(255,45,120,0.05)',border:`1px solid ${votes[q.id]===activeGame.home_artist_id?'#ff2d78':'rgba(255,45,120,0.2)'}`,color:'#ff2d78',fontFamily:'monospace',fontSize:11,cursor:'pointer',letterSpacing:1,borderRadius:4}}
+                      onClick={()=>!votes[q.id]&&castVote(q.id,activeGame.id,activeGame.home_artist_id,activeGame.home?.name)}
+                      disabled={!!votes[q.id]}
+                    >
+                      {votes[q.id]===activeGame.home_artist_id?'✓ BACKED':'BACK THIS TEAM'}<br/>
+                      <span style={{fontSize:9,opacity:0.6}}>{activeGame.home?.name}</span>
+                    </button>
+                    <button
+                      style={{flex:1,padding:'14px 8px',background:votes[q.id]===activeGame.away_artist_id?'rgba(180,255,60,0.2)':'rgba(180,255,60,0.05)',border:`1px solid ${votes[q.id]===activeGame.away_artist_id?'#b4ff3c':'rgba(180,255,60,0.2)'}`,color:'#b4ff3c',fontFamily:'monospace',fontSize:11,cursor:'pointer',letterSpacing:1,borderRadius:4}}
+                      onClick={()=>!votes[q.id]&&castVote(q.id,activeGame.id,activeGame.away_artist_id,activeGame.away?.name)}
+                      disabled={!!votes[q.id]}
+                    >
+                      {votes[q.id]===activeGame.away_artist_id?'✓ BACKED':'BACK THIS TEAM'}<br/>
+                      <span style={{fontSize:9,opacity:0.6}}>{activeGame.away?.name}</span>
+                    </button>
+                  </div>
+                ))}
+                {quarters.filter(q=>q.status==='live').length===0 && (
+                  <div style={{textAlign:'center',fontSize:11,color:'#333',padding:16}}>Waiting for next quarter...</div>
+                )}
+              </div>
+            </div>
+
+            {/* Bottom section — chat + points feed */}
+            <div style={{display:'flex',gap:0,borderTop:'1px solid #111',minHeight:300}}>
+              
+              {/* Live chat */}
+              <div style={{flex:1,borderRight:'1px solid #111',display:'flex',flexDirection:'column'}}>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,padding:'10px 14px',borderBottom:'1px solid #111'}}>LIVE CHAT</div>
+                <div style={{flex:1,overflowY:'auto',padding:'10px 14px',maxHeight:220,display:'flex',flexDirection:'column-reverse'}}>
+                  {chatMessages.length===0&&<div style={{fontSize:11,color:'#222'}}>No messages yet</div>}
+                 {chatMessages.map((m,i)=>{
+                    const backedHome = m.voted_for_artist === activeGame.home_artist_id
+                    const backedAway = m.voted_for_artist === activeGame.away_artist_id
+                    const teamColor = backedHome ? '#ff2d78' : backedAway ? '#b4ff3c' : '#555'
+                    const teamDot = backedHome ? '🔴' : backedAway ? '🟢' : '⚪'
+                    return (
+                      <div key={m.id||i} style={{marginBottom:8}}>
+                        <span style={{fontSize:10,color:teamColor}}>{teamDot} {m.fans?.username||'fan'} </span>
+                        <span style={{fontSize:11,color:'#888'}}>{m.message}</span>
+                        {m.points_earned > 0 && <span style={{fontSize:9,color:'#ffd60a',marginLeft:6}}>+{m.points_earned}pts</span>}
+                      </div>
+                    )
+                  })}
+                </div>
+                <div style={{display:'flex',gap:0,borderTop:'1px solid #111'}}>
+                  <input
+                    style={{flex:1,background:'transparent',border:'none',color:'#fff',padding:'10px 14px',fontSize:11,fontFamily:'monospace',outline:'none'}}
+                    placeholder="Say something..."
+                    value={chatInput}
+                    onChange={e=>setChatInput(e.target.value)}
+                    onKeyDown={e=>e.key==='Enter'&&sendChat()}
+                  />
+                  <button style={{background:'transparent',border:'none',borderLeft:'1px solid #111',color:'#ff2d78',padding:'10px 14px',cursor:'pointer',fontFamily:'monospace',fontSize:10}} onClick={sendChat}>SEND</button>
+                </div>
+              </div>
+
+              {/* Points feed */}
+              <div style={{flex:1,display:'flex',flexDirection:'column'}}>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,padding:'10px 14px',borderBottom:'1px solid #111'}}>POINTS FEED</div>
+                <div style={{flex:1,overflowY:'auto',padding:'10px 14px',maxHeight:220,display:'flex',flexDirection:'column'}}>
+                  {pointsFeed.length===0&&<div style={{fontSize:11,color:'#222'}}>No points yet</div>}
+                  {pointsFeed.map(p=>(
+                    <div key={p.id} style={{marginBottom:8,borderBottom:'1px solid #0a0a0a',paddingBottom:8}}>
+                      <div style={{fontSize:10,color:'#b4ff3c'}}>{p.fan} <span style={{color:'#333'}}>voted</span> {p.artist}</div>
+                      <div style={{display:'flex',justifyContent:'space-between'}}>
+                        <span style={{fontSize:9,color:'#333'}}>{p.time}</span>
+                        <span style={{fontSize:10,color:'#ffd60a',fontWeight:700}}>+{p.pts} pts</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+          
 
         {/* ── STANDINGS ── */}
         {tab==='standings' && (
