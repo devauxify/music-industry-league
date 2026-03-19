@@ -1,5 +1,12 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
+async function createCheckout(priceId, userId, role) {
+  const { data, error } = await supabase.functions.invoke('create-checkout', {
+    body: { priceId, userId, role }
+  })
+  if (error) { alert('Error: ' + error.message); return }
+  window.location.href = data.url
+}
 import Auth from './Auth'
 
 const BRAND = "MUSIC INDUSTRY LEAGUE"
@@ -9,6 +16,25 @@ export default function App() {
   const [loading, setLoading]   = useState(true)
   const [userRole, setUserRole] = useState(null)
   const [authMode, setAuthMode] = useState(null) // 'artist' | 'fan'
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const role = params.get('role')
+    const userId = params.get('user_id')
+    const sessionId = params.get('session_id')
+    if (sessionId && role && userId) {
+      async function handleSuccess() {
+        if (role === 'artist') {
+          await supabase.from('artists').update({ paid: true }).eq('user_id', userId)
+        }
+        if (role === 'fan') {
+          await supabase.from('fans').update({ subscribed: true }).eq('user_id', userId)
+        }
+        window.history.replaceState({}, '', '/')
+      }
+      handleSuccess()
+    }
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -1404,10 +1430,10 @@ function ArtistDashboard({ session, onSignOut }) {
               )}
             </div>
             {!artist?.paid && (
-              <button style={T.btn} onClick={()=>alert('Stripe payment coming soon!')}>
-                SUBSCRIBE $60/YR →
-              </button>
-            )}
+                <button style={T.btn} onClick={()=>createCheckout(process.env.REACT_APP_STRIPE_ARTIST_PRICE, session.user.id, 'artist')}>
+                  SUBSCRIBE $60/YR →
+                </button>
+              )}
           </div>
         )}
 
@@ -1636,6 +1662,14 @@ function FanDashboard({ session, onSignOut }) {
         </div>
       </div>
 
+{!fan?.subscribed && (
+        <div style={{background:'rgba(255,215,0,0.05)',borderBottom:'1px solid rgba(255,215,0,0.15)',padding:'10px 24px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{fontSize:11,color:'#ffd60a'}}>Subscribe to unlock all features — $5/month</div>
+          <button style={{background:'transparent',border:'1px solid rgba(255,215,0,0.4)',color:'#ffd60a',padding:'6px 16px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={()=>createCheckout(process.env.REACT_APP_STRIPE_FAN_PRICE, session.user.id, 'fan')}>
+            SUBSCRIBE →
+          </button>
+        </div>
+      )}
       <div style={T.nav}>
         {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
