@@ -1,13 +1,29 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
-async function createCheckout(priceId, userId, role) {
-  const { data, error } = await supabase.functions.invoke('create-checkout', {
-    body: { priceId, userId, role }
-  })
-  if (error) { alert('Error: ' + error.message); return }
-  window.location.href = data.url
-}
 import Auth from './Auth'
+
+async function createCheckout(priceId, userId, role) {
+  try {
+    const { data, error } = await supabase.functions.invoke('create-checkout', {
+      body: { priceId, userId, role }
+    })
+    if (error) throw error
+    if (data?.url) {
+      window.location.href = data.url
+    } else {
+      alert('No checkout URL returned: ' + JSON.stringify(data))
+    }
+  } catch (err) {
+    if (err.context) {
+      const body = await err.context.json()
+      console.log('Error body:', body)
+      alert('Error: ' + JSON.stringify(body))
+    } else {
+      console.log('Checkout error:', err)
+      alert('Checkout error: ' + err.message)
+    }
+  }
+}
 
 const BRAND = "MUSIC INDUSTRY LEAGUE"
 
