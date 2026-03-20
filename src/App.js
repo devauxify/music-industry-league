@@ -42,9 +42,23 @@ export default function App() {
      async function handleSuccess() {
         if (role === 'artist') {
           await supabase.from('artists').update({ paid: true }).eq('user_id', userId)
+          const now = new Date()
+          const { data: pool } = await supabase.from('prize_pools').select('*').eq('status','active').eq('month', now.getMonth()+1).eq('year', now.getFullYear()).single()
+          if (pool) {
+            await supabase.from('prize_pools').update({ artist_sub_count: (pool.artist_sub_count||0)+1, total_amount: (pool.total_amount||0)+6 }).eq('id', pool.id)
+          } else {
+            await supabase.from('prize_pools').insert({ month: now.getMonth()+1, year: now.getFullYear(), artist_sub_count:1, total_amount:6, status:'active' })
+          }
         }
         if (role === 'fan') {
           await supabase.from('fans').update({ subscribed: true }).eq('user_id', userId)
+          const now = new Date()
+          const { data: pool } = await supabase.from('prize_pools').select('*').eq('status','active').eq('month', now.getMonth()+1).eq('year', now.getFullYear()).single()
+          if (pool) {
+            await supabase.from('prize_pools').update({ fan_sub_count: (pool.fan_sub_count||0)+1, total_amount: (pool.total_amount||0)+0.50 }).eq('id', pool.id)
+          } else {
+            await supabase.from('prize_pools').insert({ month: now.getMonth()+1, year: now.getFullYear(), fan_sub_count:1, total_amount:0.50, status:'active' })
+          }
         }
         if (role === 'coins_6') {
           const { data: fanData } = await supabase.from('fans').select('coins').eq('id', userId).single()
@@ -1563,6 +1577,9 @@ function FanDashboard({ session, onSignOut }) {
   const [voteCounts, setVoteCounts] = useState({})
   const [playoffBracket, setPlayoffBracket] = useState([])
   const [profileStats, setProfileStats] = useState(null)
+  const [prizePool, setPrizePool] = useState(null)
+  const [prizeLeaderboard, setPrizeLeaderboard] = useState([])
+  const [pastWinners, setPastWinners] = useState([])
 
   const SALARY_CAP = 100
   const COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
@@ -1570,6 +1587,7 @@ function FanDashboard({ session, onSignOut }) {
   useEffect(() => { loadAll() }, [])
   useEffect(() => {
     if (tab === 'profile') loadProfileStats()
+    if (tab === 'prizes') loadPrizes()
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
@@ -1615,6 +1633,16 @@ function FanDashboard({ session, onSignOut }) {
       backed: backed || [],
       totalVotes: votes?.length || 0,
     })
+  }
+
+  async function loadPrizes() {
+    const now = new Date()
+    const { data: pool } = await supabase.from('prize_pools').select('*').eq('status','active').eq('month', now.getMonth()+1).eq('year', now.getFullYear()).single()
+    setPrizePool(pool || null)
+    const { data: fans } = await supabase.from('fans').select('id, username, coins, shootout_points').order('shootout_points', { ascending: false }).limit(10)
+    setPrizeLeaderboard(fans || [])
+    const { data: past } = await supabase.from('prize_winners').select('*, fans(username)').order('created_at', { ascending: false }).limit(12)
+    setPastWinners(past || [])
   }
 
   async function castVote(quarterId, gameId, artistId, artistName) {
@@ -1794,7 +1822,7 @@ function FanDashboard({ session, onSignOut }) {
         </div>
       )}
       <div style={T.nav}>
-        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['profile','MY PROFILE']].map(([id,label])=>(
+        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['prizes','PRIZES'],['profile','MY PROFILE']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -2215,6 +2243,65 @@ function FanDashboard({ session, onSignOut }) {
         {/* ── SHOOTOUT ── */}
        {tab==='shootout' && (
           <AlbumShootout fan={fan} supabase={supabase} onCoinsUpdate={(newCoins)=>setFan(f=>({...f,coins:newCoins}))} />
+        )}
+
+        {/* ── PRIZES ── */}
+        {tab==='prizes' && (
+          <div>
+            <div style={{...T.card,background:'linear-gradient(135deg,rgba(255,215,0,0.06),rgba(255,45,120,0.04))',borderColor:'rgba(255,215,0,0.2)',marginBottom:20}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+                <div>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:3,marginBottom:6}}>MONTHLY PRIZE POOL</div>
+                  <div style={{fontSize:36,color:'#ffd60a',fontWeight:700}}>${(prizePool?.total_amount||0).toFixed(2)}</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>RESETS</div>
+                  <div style={{fontSize:11,color:'#fff'}}>1st of every month</div>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                {[['1st','50%','#ffd60a'],['2nd','30%','#b4ff3c'],['3rd','15%','#ff9500'],['4th','5%','#ff2d78']].map(([pos,pct,color])=>(
+                  <div key={pos} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:4,padding:'10px 8px',textAlign:'center'}}>
+                    <div style={{fontSize:16,color,fontWeight:700}}>{pos}</div>
+                    <div style={{fontSize:11,color:'#fff',marginTop:4}}>${((prizePool?.total_amount||0)*(parseInt(pct)/100)).toFixed(2)}</div>
+                    <div style={{fontSize:9,color:'#444',marginTop:2}}>{pct}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>THIS MONTH — TOP FANS</div>
+            {prizeLeaderboard.map((f,i)=>(
+              <div key={f.id} style={{...T.card,marginBottom:8,borderLeft:`3px solid ${['#ffd60a','#b4ff3c','#ff9500','#ff2d78','#7F77DD','#378ADD','#1D9E75','#D85A30','#888','#555'][i]}`}}>
+                <div style={{display:'flex',gap:14,alignItems:'center'}}>
+                  <div style={{fontSize:20,color:i<4?['#ffd60a','#b4ff3c','#ff9500','#ff2d78'][i]:'#333',fontWeight:700,minWidth:28}}>#{i+1}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,color:'#fff'}}>{f.username}</div>
+                    <div style={{fontSize:9,color:'#444',marginTop:2}}>{f.shootout_points||0} shootout pts</div>
+                  </div>
+                  {i < 4 && <div style={{fontSize:11,color:'#ffd60a'}}>${((prizePool?.total_amount||0)*[0.5,0.3,0.15,0.05][i]).toFixed(2)}</div>}
+                </div>
+              </div>
+            ))}
+
+            {pastWinners.length > 0 && (
+              <div style={{marginTop:24}}>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>PAST WINNERS</div>
+                {pastWinners.map(w=>(
+                  <div key={w.id} style={{...T.card,marginBottom:6}}>
+                    <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                      <span style={{fontSize:14,color:'#ffd60a',fontWeight:700}}>#{w.position}</span>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:11,color:'#fff'}}>{w.fans?.username||w.fan_username}</div>
+                      </div>
+                      <div style={{fontSize:12,color:'#ffd60a',fontWeight:700}}>${w.amount}</div>
+                      <span style={{fontSize:9,padding:'2px 7px',background:w.paid?'rgba(180,255,60,0.1)':'rgba(255,45,120,0.1)',color:w.paid?'#b4ff3c':'#ff2d78'}}>{w.paid?'PAID':'PENDING'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {/* ── PROFILE ── */}
