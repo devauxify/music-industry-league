@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
 import Auth from './Auth'
 
@@ -39,12 +39,24 @@ export default function App() {
     const userId = params.get('user_id')
     const sessionId = params.get('session_id')
     if (sessionId && role && userId) {
-      async function handleSuccess() {
+     async function handleSuccess() {
         if (role === 'artist') {
           await supabase.from('artists').update({ paid: true }).eq('user_id', userId)
         }
         if (role === 'fan') {
           await supabase.from('fans').update({ subscribed: true }).eq('user_id', userId)
+        }
+        if (role === 'coins_6') {
+          const { data: fanData } = await supabase.from('fans').select('coins').eq('id', userId).single()
+          await supabase.from('fans').update({ coins: (fanData?.coins||0) + 6 }).eq('id', userId)
+        }
+        if (role === 'coins_30') {
+          const { data: fanData } = await supabase.from('fans').select('coins').eq('id', userId).single()
+          await supabase.from('fans').update({ coins: (fanData?.coins||0) + 30 }).eq('id', userId)
+        }
+        if (role === 'coins_50') {
+          const { data: fanData } = await supabase.from('fans').select('coins').eq('id', userId).single()
+          await supabase.from('fans').update({ coins: (fanData?.coins||0) + 50 }).eq('id', userId)
         }
         window.history.replaceState({}, '', '/')
       }
@@ -219,6 +231,9 @@ function AdminDashboard({ session, onSignOut }) {
   const [activeSeason, setActiveSeason] = useState(null)
   const [leagueGames, setLeagueGames] = useState([])
   const [playoffSeries, setPlayoffSeries] = useState([])
+  const [catalog, setCatalog] = useState([])
+  const [catalogForm, setCatalogForm] = useState({ title:'', artist_name:'', type:'song', cover_url:'', coin_cost:1 })
+  const [catalogMsg, setCatalogMsg] = useState('')
   const [gamesPage, setGamesPage] = useState(0)
   const [gamesFilter, setGamesFilter] = useState({ artist:'', date:'' })
   const [gamesTotal, setGamesTotal] = useState(0)
@@ -231,6 +246,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (tab === 'artists') loadArtists()
     if (tab === 'fans') loadFans()
     if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(0, gamesFilter); loadPlayoffs(); }
+    if (tab === 'shootout') loadCatalog()
   }, [tab])
 
   async function loadQueue() {
@@ -346,6 +362,11 @@ function AdminDashboard({ session, onSignOut }) {
       .order('round')
       .order('series_number')
     setPlayoffSeries(data || [])
+  }
+
+  async function loadCatalog() {
+    const { data } = await supabase.from('shootout_catalog').select('*').order('created_at', { ascending: false })
+    setCatalog(data || [])
   }
 
   async function recordPlayoffWin(seriesId, artistId) {
@@ -600,7 +621,7 @@ function AdminDashboard({ session, onSignOut }) {
       </div>
 
       <div style={T.nav}>
-        {[['queue','IMAGE QUEUE'],['create','CREATE ARTIST'],['artists','ARTISTS'],['fans','FANS'],['league','LEAGUE MANAGER']].map(([id,label])=>(
+        {[['queue','IMAGE QUEUE'],['create','CREATE ARTIST'],['artists','ARTISTS'],['fans','FANS'],['league','LEAGUE MANAGER'],['shootout','SHOOTOUT CATALOG']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -803,6 +824,54 @@ function AdminDashboard({ session, onSignOut }) {
               })}
             </div>
 
+          </div>
+        )}
+
+        {tab==='shootout' && (
+          <div>
+            <div style={{fontSize:10,color:'#333',marginBottom:20,letterSpacing:2}}>SHOOTOUT CATALOG</div>
+            
+            <div style={{maxWidth:480,marginBottom:32}}>
+              <div style={T.label}>TITLE</div>
+              <input style={T.input} value={catalogForm.title} onChange={e=>setCatalogForm({...catalogForm,title:e.target.value})} placeholder="Song or album title" />
+              <div style={T.label}>ARTIST NAME</div>
+              <input style={T.input} value={catalogForm.artist_name} onChange={e=>setCatalogForm({...catalogForm,artist_name:e.target.value})} placeholder="Artist name" />
+              <div style={T.label}>TYPE</div>
+              <select style={{...T.input,marginBottom:12}} value={catalogForm.type} onChange={e=>setCatalogForm({...catalogForm,type:e.target.value,coin_cost:e.target.value==='song'?1:2})}>
+                <option value="song">Song — 1 coin</option>
+                <option value="album">Album — 2 coins</option>
+              </select>
+              <div style={T.label}>COVER IMAGE URL</div>
+              <input style={T.input} value={catalogForm.cover_url} onChange={e=>setCatalogForm({...catalogForm,cover_url:e.target.value})} placeholder="https://..." />
+              {catalogForm.cover_url && <img src={catalogForm.cover_url} alt="preview" style={{width:80,height:80,objectFit:'cover',borderRadius:4,marginBottom:12,border:'1px solid #222'}} />}
+              {catalogMsg && <div style={{fontSize:11,color:catalogMsg.startsWith('Error')?'#ff2d78':'#b4ff3c',marginBottom:12}}>{catalogMsg}</div>}
+              <button style={T.submitBtn} onClick={async()=>{
+                if (!catalogForm.title||!catalogForm.artist_name) { setCatalogMsg('Title and artist required'); return }
+                const {error} = await supabase.from('shootout_catalog').insert(catalogForm)
+                if (error) { setCatalogMsg('Error: '+error.message); return }
+                setCatalogMsg('Added to catalog!')
+                setCatalogForm({ title:'', artist_name:'', type:'song', cover_url:'', coin_cost:1 })
+                loadCatalog()
+              }}>ADD TO CATALOG →</button>
+            </div>
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>CATALOG — {catalog.length} items</div>
+            {catalog.map(item=>(
+              <div key={item.id} style={{...T.row,marginBottom:8,gap:12}}>
+                {item.cover_url
+                  ? <img src={item.cover_url} alt="cover" style={{width:40,height:40,objectFit:'cover',borderRadius:3,border:'1px solid #222',flexShrink:0}} />
+                  : <div style={{width:40,height:40,background:'#111',borderRadius:3,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:8}}>NO ART</div>
+                }
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:'#fff'}}>{item.title}</div>
+                  <div style={{fontSize:10,color:'#444'}}>{item.artist_name} · {item.type.toUpperCase()} · {item.coin_cost} coin{item.coin_cost>1?'s':''}</div>
+                </div>
+                <button style={{...T.reject,padding:'4px 10px',fontSize:9}} onClick={async()=>{
+                  await supabase.from('shootout_catalog').delete().eq('id',item.id)
+                  loadCatalog()
+                }}>REMOVE</button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -2106,11 +2175,8 @@ function FanDashboard({ session, onSignOut }) {
         )}
 
         {/* ── SHOOTOUT ── */}
-        {tab==='shootout' && (
-          <div style={{textAlign:'center',padding:'40px 0'}}>
-            <div style={{fontSize:11,color:'#ff2d78',letterSpacing:3,marginBottom:8}}>ALBUM SHOOTOUT</div>
-            <div style={{fontSize:11,color:'#333',marginBottom:24}}>Coming soon — shoot albums into fire net or trash can to earn points</div>
-          </div>
+       {tab==='shootout' && (
+          <AlbumShootout fan={fan} supabase={supabase} onCoinsUpdate={(newCoins)=>setFan(f=>({...f,coins:newCoins}))} />
         )}
 
       </div>
@@ -2148,4 +2214,416 @@ const L = {
 
 const PR = {
   btn:{flex:1,background:'rgba(255,255,255,0.02)',border:'1px solid',borderRadius:6,padding:'24px 16px',cursor:'pointer',fontFamily:'monospace'},
+}
+
+function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
+  const [catalog, setCatalog] = useState([])
+  const [coins, setCoins] = useState(fan?.coins || 0)
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState(null)
+  const [mode, setMode] = useState('free')
+  const [stats, setStats] = useState({ pts:0, fire:0, trash:0, shots:0, streak:0 })
+  const [sentiment, setSentiment] = useState({})
+  const [weekSentiment, setWeekSentiment] = useState({})
+  const [instr, setInstr] = useState('Search for a song or album, then click a net to shoot')
+  const [msg, setMsg] = useState('')
+  const canvasRef = React.useRef(null)
+  const stateRef = React.useRef({ balls:[], particles:[], selected:null, stats:{ pts:0, fire:0, trash:0, shots:0, streak:0 } })
+
+  const W=680, H=430
+  const FIRE={x:572, y:90, r:22}
+  const TRASH={x:108, y:90, r:22}
+  const PAD={x:340, y:382}
+  const COLORS=['#D4537E','#378ADD','#BA7517','#1D9E75','#7F77DD','#D85A30','#ff2d78','#b4ff3c']
+
+  const filtered = catalog.filter(c =>
+    search.length < 2 ? false :
+    c.title.toLowerCase().includes(search.toLowerCase()) ||
+    c.artist_name.toLowerCase().includes(search.toLowerCase())
+  )
+
+  useEffect(() => { loadCatalogData() }, [])
+
+  async function loadCatalogData() {
+    const { data } = await supabase.from('shootout_catalog').select('*').eq('active', true).order('created_at', { ascending: false })
+    setCatalog(data || [])
+    const sent = {}
+    const weekSent = {}
+    if (data) data.forEach(c => { sent[c.id]={fire:0,trash:0}; weekSent[c.id]={fire:0,trash:0} })
+    const now = new Date()
+    const weekNum = getWeekNumber(now)
+    const { data: shots } = await supabase.from('album_shots').select('catalog_id, net, week_number, year')
+    if (shots) {
+      shots.forEach(s => {
+        if (sent[s.catalog_id]) sent[s.catalog_id][s.net]++
+        if (weekSent[s.catalog_id] && s.week_number===weekNum && s.year===now.getFullYear()) weekSent[s.catalog_id][s.net]++
+      })
+    }
+    setSentiment(sent)
+    setWeekSentiment(weekSent)
+  }
+
+  function getWeekNumber(d) {
+    const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+    const dayNum = date.getUTCDay() || 7
+    date.setUTCDate(date.getUTCDate() + 4 - dayNum)
+    const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1))
+    return Math.ceil((((date - yearStart) / 86400000) + 1)/7)
+  }
+
+  async function shoot(net) {
+    if (!stateRef.current.selected) { setInstr('Pick a song or album first!'); return }
+    const item = stateRef.current.selected
+    const cost = item.coin_cost || 1
+    if (!fan || coins < cost) { setMsg(`Not enough coins — need ${cost} coin${cost>1?'s':''}. Buy more coins!`); return }
+    const mult = mode==='event' ? 2 : 1
+    const earned = 10 * mult
+    const newStats = {
+      ...stateRef.current.stats,
+      pts: stateRef.current.stats.pts + earned,
+      shots: stateRef.current.stats.shots + 1,
+      [net]: stateRef.current.stats[net] + 1,
+      streak: net==='fire' ? stateRef.current.stats.streak + 1 : 0
+    }
+    stateRef.current.stats = newStats
+    setStats({...newStats})
+    const now = new Date()
+    const weekNum = getWeekNumber(now)
+    await supabase.from('album_shots').insert({ fan_id: fan.id, catalog_id: item.id, artist_name: item.artist_name, net, points: earned, week_number: weekNum, year: now.getFullYear() })
+    const newCoins = coins - cost
+    setCoins(newCoins)
+    if (onCoinsUpdate) onCoinsUpdate(newCoins)
+    await supabase.from('fans').update({ 
+      coins: newCoins,
+      shootout_points: (fan.shootout_points||0) + 0.25
+    }).eq('id', fan.id)
+    setSentiment(s=>({ ...s, [item.id]:{ ...s[item.id], [net]:(s[item.id]?.[net]||0)+1 } }))
+    setWeekSentiment(s=>({ ...s, [item.id]:{ ...s[item.id], [net]:(s[item.id]?.[net]||0)+1 } }))
+    const idx = catalog.findIndex(c=>c.id===item.id)
+    const color = COLORS[idx%COLORS.length]
+    const tgt = net==='fire' ? FIRE : TRASH
+    const ball = { item, net, tx:tgt.x, ty:tgt.y, t:0, color }
+    stateRef.current.balls = [...stateRef.current.balls, ball]
+    const sm = net==='fire' && newStats.streak>=3 ? ` streak ${newStats.streak}!` : ''
+    setInstr(net==='fire' ? `+${earned} pts — fire!${sm}` : `+${earned} pts — trashed`)
+    setMsg(`-${cost} coin${cost>1?'s':''}`)
+    const iv = setInterval(()=>{
+      ball.t += 0.038
+      if (ball.t>=1) {
+        ball.t=1; clearInterval(iv)
+        spawnParticles(tgt.x, tgt.y, net)
+        setTimeout(()=>{ stateRef.current.balls = stateRef.current.balls.filter(b=>b!==ball) },400)
+      }
+    },16)
+  }
+
+  function spawnParticles(x,y,net) {
+    const color = net==='fire'?'#EF9F27':'#5aaa5a'
+    const newP = Array.from({length:12},()=>{
+      const a=Math.random()*Math.PI*2, sp=1.5+Math.random()*3.5
+      return {x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:1,color,r:2+Math.random()*4}
+    })
+    stateRef.current.particles = [...stateRef.current.particles, ...newP]
+  }
+
+  function easeInOut(t){return t<0.5?2*t*t:-1+(4-2*t)*t}
+  function arcPos(t,sx,sy,tx,ty){
+    const cx=(sx+tx)/2,cy=Math.min(sy,ty)-190,u=1-t
+    return{x:u*u*sx+2*u*t*cx+t*t*tx,y:u*u*sy+2*u*t*cy+t*t*ty}
+  }
+
+  useEffect(()=>{
+    const cv=canvasRef.current
+    if(!cv) return
+    const ctx=cv.getContext('2d')
+    let animId
+
+    function drawCourt(){
+      ctx.fillStyle='#C9A86B';ctx.fillRect(0,0,W,H)
+      ctx.strokeStyle='rgba(175,135,75,0.5)';ctx.lineWidth=1
+      for(let y=0;y<H;y+=22){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+      for(let x=0;x<W;x+=22){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+      ctx.strokeStyle='rgba(255,248,220,0.58)';ctx.lineWidth=2.5
+      ctx.beginPath();ctx.arc(W/2,H/2,62,0,Math.PI*2);ctx.stroke()
+      ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke()
+      ctx.strokeRect(0,H*0.28,165,H*0.57)
+      ctx.strokeRect(W-165,H*0.28,165,H*0.57)
+      ctx.beginPath();ctx.arc(0,H/2,200,-Math.PI*0.45,Math.PI*0.45);ctx.stroke()
+      ctx.beginPath();ctx.arc(W,H/2,200,Math.PI*0.55,Math.PI*1.45);ctx.stroke()
+    }
+
+    function drawBoard(bx){
+      ctx.fillStyle='rgba(100,100,120,0.7)'
+      ctx.fillRect(bx-20,10,12,6);ctx.fillRect(bx+8,10,12,6)
+      ctx.fillStyle='rgba(0,0,0,0.14)';ctx.fillRect(bx-32+3,17,64,52)
+      ctx.fillStyle='rgba(232,238,255,0.94)';ctx.strokeStyle='rgba(55,55,90,0.75)';ctx.lineWidth=2
+      ctx.fillRect(bx-32,17,64,52);ctx.strokeRect(bx-32,17,64,52)
+      ctx.strokeStyle='rgba(200,35,35,0.6)';ctx.lineWidth=1.5
+      ctx.strokeRect(bx-13,17+52*0.3,26,52*0.45)
+    }
+
+    function drawRim(cx,col,ry){
+      ctx.strokeStyle='rgba(0,0,0,0.2)';ctx.lineWidth=5
+      ctx.beginPath();ctx.arc(cx,ry+2,22,0,Math.PI*2);ctx.stroke()
+      ctx.strokeStyle=col;ctx.lineWidth=4
+      ctx.beginPath();ctx.arc(cx,ry,22,0,Math.PI*2);ctx.stroke()
+    }
+
+    function drawFireNet(){
+      const x=FIRE.x,y=FIRE.y,tick=Date.now()
+      drawBoard(x);drawRim(x,'#c05010',y)
+      const nb=y+40
+      ctx.strokeStyle='rgba(205,125,25,0.72)';ctx.lineWidth=1
+      for(let i=0;i<12;i++){
+        const a=(i/12)*Math.PI*2
+        ctx.beginPath();ctx.moveTo(x+Math.cos(a)*22,y+Math.sin(a)*3)
+        ctx.quadraticCurveTo(x+Math.cos(a)*8,y+20,x+Math.cos(a)*3,nb);ctx.stroke()
+      }
+      for(let f=0;f<10;f++){
+        const fl=Math.sin(tick/115+f*1.05)*0.28+0.72;ctx.globalAlpha=fl
+        const fx=x-22+3+f*(44/9)+Math.sin(tick/175+f)*2
+        const fh=13+Math.abs(Math.sin(tick/225+f*0.85))*26
+        const fy=y-9-fh
+        const gr=ctx.createRadialGradient(fx,fy+fh*.55,0,fx,fy+fh*.55,fh*.8)
+        gr.addColorStop(0,'#fff5a0');gr.addColorStop(0.25,'#FAC775')
+        gr.addColorStop(0.65,'#EF9F27');gr.addColorStop(1,'rgba(186,117,23,0)')
+        ctx.fillStyle=gr;ctx.beginPath();ctx.ellipse(fx,fy+fh*.5,5,fh*.5,0,0,Math.PI*2);ctx.fill()
+      }
+      ctx.globalAlpha=1
+      ctx.fillStyle='#b04010';ctx.font='500 11px sans-serif';ctx.textAlign='center'
+      ctx.fillText('fire net  +10 pts',x,y+58)
+    }
+
+    function drawTrashCan(){
+      const x=TRASH.x,y=TRASH.y
+      const ct=y+y*0.5*0.1,cb=ct+76,tw=50,bw=40
+      drawBoard(x);drawRim(x,'#3a7a28',y)
+      ctx.save()
+      ctx.beginPath()
+      ctx.moveTo(x-tw/2,ct);ctx.lineTo(x+tw/2,ct)
+      ctx.lineTo(x+bw/2,cb);ctx.lineTo(x-bw/2,cb)
+      ctx.closePath()
+      ctx.fillStyle='rgba(58,122,40,0.15)';ctx.fill()
+      ctx.strokeStyle='rgba(48,110,30,0.9)';ctx.lineWidth=2.5;ctx.stroke()
+      ctx.strokeStyle='rgba(48,110,30,0.55)';ctx.lineWidth=1.5
+      ctx.beginPath();ctx.moveTo(x,ct);ctx.lineTo(x,cb);ctx.stroke()
+      ctx.strokeStyle='rgba(48,110,30,0.35)';ctx.lineWidth=1
+      for(let r=1;r<=3;r++){
+        const ry=ct+76*(r/4),prog=r/4
+        const lx=x-tw/2+(tw-bw)/2*prog,rx=x+tw/2-(tw-bw)/2*prog
+        ctx.beginPath();ctx.moveTo(lx,ry);ctx.lineTo(rx,ry);ctx.stroke()
+      }
+      const lidH=12,lidY=ct-lidH
+      ctx.fillStyle='rgba(68,145,48,0.95)';ctx.strokeStyle='rgba(38,100,22,0.95)';ctx.lineWidth=2
+      ctx.beginPath();ctx.roundRect(x-tw/2-3,lidY,tw+6,lidH,4);ctx.fill();ctx.stroke()
+      ctx.strokeStyle='rgba(38,100,22,0.95)';ctx.lineWidth=3;ctx.lineCap='round'
+      ctx.beginPath();ctx.arc(x,lidY+2,9,Math.PI,0);ctx.stroke()
+      ctx.lineCap='butt';ctx.restore()
+      ctx.fillStyle='rgba(38,100,22,0.85)';ctx.font='500 11px sans-serif';ctx.textAlign='center'
+      ctx.fillText('trash  +10 pts',x,cb+18)
+    }
+
+    function drawPad(){
+      const sel = stateRef.current.selected
+      ctx.fillStyle='rgba(99,153,34,0.16)'
+      ctx.beginPath();ctx.arc(PAD.x,PAD.y,26,0,Math.PI*2);ctx.fill()
+      ctx.strokeStyle='#639922';ctx.lineWidth=1.5
+      ctx.beginPath();ctx.arc(PAD.x,PAD.y,26,0,Math.PI*2);ctx.stroke()
+      if(sel){
+        if (sel.cover_url) {
+          const img = new Image()
+          img.src = sel.cover_url
+          ctx.save()
+          ctx.beginPath();ctx.arc(PAD.x,PAD.y,17,0,Math.PI*2);ctx.clip()
+          ctx.drawImage(img,PAD.x-17,PAD.y-17,34,34)
+          ctx.restore()
+        } else {
+          const idx = catalog.findIndex(c=>c.id===sel.id)
+          ctx.fillStyle=COLORS[idx%COLORS.length]
+          ctx.beginPath();ctx.arc(PAD.x,PAD.y,17,0,Math.PI*2);ctx.fill()
+          ctx.fillStyle='#fff';ctx.font='bold 8px sans-serif';ctx.textAlign='center'
+          ctx.fillText(sel.title?.slice(0,2).toUpperCase(),PAD.x,PAD.y+3)
+        }
+      } else {
+        ctx.fillStyle='#3B6D11';ctx.font='500 10px sans-serif';ctx.textAlign='center'
+        ctx.fillText('select',PAD.x,PAD.y-2);ctx.fillText('album',PAD.x,PAD.y+10)
+      }
+    }
+
+    function drawBalls(){
+      stateRef.current.balls.forEach(b=>{
+        const t=easeInOut(Math.min(b.t,1))
+        const pos=arcPos(t,PAD.x,PAD.y,b.tx,b.ty)
+        ctx.save();ctx.translate(pos.x,pos.y);ctx.rotate(b.t*Math.PI*8)
+        if (b.item.cover_url) {
+          const img = new Image()
+          img.src = b.item.cover_url
+          ctx.save()
+          ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.clip()
+          ctx.drawImage(img,-15,-15,30,30)
+          ctx.restore()
+          ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1
+          ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.stroke()
+        } else {
+          ctx.shadowColor='rgba(0,0,0,0.28)';ctx.shadowBlur=6
+          ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2)
+          ctx.fillStyle=b.color;ctx.fill()
+          ctx.shadowBlur=0
+          ctx.fillStyle='#fff';ctx.font='bold 7px sans-serif';ctx.textAlign='center'
+          ctx.fillText(b.item.title?.slice(0,2).toUpperCase(),0,3)
+        }
+        ctx.restore()
+      })
+    }
+
+    function drawParticles(){
+      stateRef.current.particles.forEach(p=>{
+        p.x+=p.vx;p.y+=p.vy;p.vy+=0.18;p.life-=0.05
+        ctx.globalAlpha=Math.max(0,p.life)
+        ctx.fillStyle=p.color
+        const radius = p.r*p.life
+        if (radius > 0) { ctx.beginPath();ctx.arc(p.x,p.y,radius,0,Math.PI*2);ctx.fill() }
+      })
+      ctx.globalAlpha=1
+      stateRef.current.particles=stateRef.current.particles.filter(p=>p.life>0)
+    }
+
+    function loop(){
+      drawCourt();drawFireNet();drawTrashCan();drawPad();drawBalls();drawParticles()
+      animId=requestAnimationFrame(loop)
+    }
+    loop()
+    return ()=>cancelAnimationFrame(animId)
+  },[catalog])
+
+  const handleCanvasClick = (e) => {
+    if (!stateRef.current.selected) { setInstr('Pick a song or album first!'); return }
+    const cv = canvasRef.current
+    const rect = cv.getBoundingClientRect()
+    const mx = (e.clientX-rect.left)*(W/rect.width)
+    const my = (e.clientY-rect.top)*(H/rect.height)
+    const inFire = mx>=FIRE.x-FIRE.r-30&&mx<=FIRE.x+FIRE.r+30&&my<=FIRE.y+60&&my>=0
+    const inTrash = mx>=TRASH.x-30&&mx<=TRASH.x+30&&my>=0&&my<=TRASH.y+100
+    if (inFire) shoot('fire')
+    else if (inTrash) shoot('trash')
+    else setInstr('Click on fire net or trash can to shoot')
+  }
+
+  const allTimeTop = Object.entries(sentiment)
+    .map(([id,s])=>({ item: catalog.find(c=>c.id===id), fire:s.fire, trash:s.trash, total:s.fire+s.trash }))
+    .filter(x=>x.item&&x.total>0)
+    .sort((a,b)=>b.total-a.total)
+    .slice(0,5)
+
+  const weekTop = Object.entries(weekSentiment)
+    .map(([id,s])=>({ item: catalog.find(c=>c.id===id), fire:s.fire, trash:s.trash, total:s.fire+s.trash }))
+    .filter(x=>x.item&&x.total>0)
+    .sort((a,b)=>b.total-a.total)
+    .slice(0,5)
+
+  return (
+    <div style={{fontFamily:'monospace'}}>
+      <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+        {[['pts','PTS'],['fire','🔥'],['trash','🗑'],['shots','SHOTS'],['streak','STREAK']].map(([k,l])=>(
+          <div key={k} style={{background:'rgba(255,255,255,0.03)',border:'1px solid #111',borderRadius:6,padding:'8px 14px',textAlign:'center',minWidth:60}}>
+            <div style={{fontSize:20,color:k==='pts'?'#ffd60a':k==='fire'?'#EF9F27':k==='trash'?'#5aaa5a':k==='streak'?'#ff2d78':'#fff',fontWeight:500}}>{stats[k]}</div>
+            <div style={{fontSize:9,color:'#333',letterSpacing:2}}>{l}</div>
+          </div>
+        ))}
+        <div style={{display:'flex',gap:8,alignItems:'center',marginLeft:'auto'}}>
+          <div style={{fontSize:10,color:'#ffd60a'}}>{coins} coins</div>
+          <button style={{background:mode==='event'?'rgba(255,215,0,0.1)':'transparent',border:'1px solid rgba(255,215,0,0.3)',color:'#ffd60a',padding:'6px 14px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',borderRadius:99}} onClick={()=>setMode(m=>m==='free'?'event':'free')}>{mode==='event'?'EVENT 2X':'FREE PLAY'}</button>
+        </div>
+      </div>
+
+      <div style={{position:'relative',marginBottom:10}}>
+        <input
+          style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'10px 14px',fontSize:11,fontFamily:'monospace',width:'100%',boxSizing:'border-box'}}
+          placeholder="Search songs and albums..."
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+        />
+        {filtered.length>0 && (
+          <div style={{position:'absolute',top:'100%',left:0,right:0,background:'#0d0d0d',border:'1px solid #222',zIndex:10,maxHeight:200,overflowY:'auto'}}>
+            {filtered.map((item,i)=>(
+              <div key={item.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 14px',cursor:'pointer',borderBottom:'1px solid #111'}}
+                onClick={()=>{ setSelected(item); stateRef.current.selected=item; setSearch(''); setInstr(`${item.title} selected — click fire net or trash can (costs ${item.coin_cost} coin${item.coin_cost>1?'s':''})`); setMsg('') }}>
+                {item.cover_url
+                  ? <img src={item.cover_url} alt="" style={{width:36,height:36,objectFit:'cover',borderRadius:3,flexShrink:0}} />
+                  : <div style={{width:36,height:36,background:COLORS[i%COLORS.length],borderRadius:3,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:10,fontWeight:700}}>{item.title.slice(0,2).toUpperCase()}</div>
+                }
+                <div>
+                  <div style={{fontSize:11,color:'#fff'}}>{item.title}</div>
+                  <div style={{fontSize:9,color:'#444'}}>{item.artist_name} · {item.type.toUpperCase()} · {item.coin_cost} coin{item.coin_cost>1?'s':''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',background:'rgba(255,255,255,0.03)',border:'1px solid #222',borderRadius:6,marginBottom:10}}>
+          {selected.cover_url
+            ? <img src={selected.cover_url} alt="" style={{width:40,height:40,objectFit:'cover',borderRadius:3,flexShrink:0}} />
+            : <div style={{width:40,height:40,background:'#222',borderRadius:3,flexShrink:0}} />
+          }
+          <div style={{flex:1}}>
+            <div style={{fontSize:11,color:'#fff'}}>{selected.title}</div>
+            <div style={{fontSize:9,color:'#444'}}>{selected.artist_name} · {selected.coin_cost} coin{selected.coin_cost>1?'s':''} per shot</div>
+          </div>
+          <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontSize:16}} onClick={()=>{ setSelected(null); stateRef.current.selected=null; setInstr('Search for a song or album, then click a net to shoot') }}>✕</button>
+        </div>
+      )}
+
+      <canvas ref={canvasRef} width={W} height={H} onClick={handleCanvasClick}
+        style={{display:'block',borderRadius:8,border:'1px solid #111',cursor:'crosshair',width:'100%'}} />
+
+      <div style={{fontSize:11,color:'#444',marginTop:6,minHeight:16}}>{instr}</div>
+      {msg && (
+        <div style={{display:'flex',alignItems:'center',gap:10,marginTop:6}}>
+          <div style={{fontSize:10,color:'#ffd60a'}}>{msg}</div>
+          {coins === 0 && (
+            <div style={{display:'flex',gap:6}}>
+             <button style={{background:'rgba(255,215,0,0.1)',border:'1px solid rgba(255,215,0,0.3)',color:'#ffd60a',padding:'4px 12px',fontSize:9,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={()=>createCheckout(process.env.REACT_APP_STRIPE_COINS_6, fan?.id, 'coins_6')}>6 COINS $.50</button>
+              <button style={{background:'rgba(255,215,0,0.1)',border:'1px solid rgba(255,215,0,0.3)',color:'#ffd60a',padding:'4px 12px',fontSize:9,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={()=>createCheckout(process.env.REACT_APP_STRIPE_COINS_30, fan?.id, 'coins_30')}>30 COINS $1.00</button>
+              <button style={{background:'rgba(255,215,0,0.1)',border:'1px solid rgba(255,215,0,0.3)',color:'#ffd60a',padding:'4px 12px',fontSize:9,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={()=>createCheckout(process.env.REACT_APP_STRIPE_COINS_50, fan?.id, 'coins_50')}>50 COINS $1.25</button>
+
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:20}}>
+        <div>
+          <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10}}>THIS WEEK</div>
+          {weekTop.length===0 && <div style={{fontSize:11,color:'#222'}}>No shots this week</div>}
+          {weekTop.map((x,i)=>(
+            <div key={x.item.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 10px',background:'rgba(255,255,255,0.02)',borderRadius:4}}>
+              <span style={{fontSize:12,color:COLORS[i%COLORS.length],fontWeight:700,minWidth:20}}>#{i+1}</span>
+              {x.item.cover_url && <img src={x.item.cover_url} alt="" style={{width:28,height:28,objectFit:'cover',borderRadius:2,flexShrink:0}} />}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:10,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{x.item.title}</div>
+                <div style={{fontSize:9,color:'#444'}}>{x.fire}🔥 {x.trash}🗑</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div>
+          <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10}}>ALL TIME</div>
+          {allTimeTop.length===0 && <div style={{fontSize:11,color:'#222'}}>No shots yet</div>}
+          {allTimeTop.map((x,i)=>(
+            <div key={x.item.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 10px',background:'rgba(255,255,255,0.02)',borderRadius:4}}>
+              <span style={{fontSize:12,color:COLORS[i%COLORS.length],fontWeight:700,minWidth:20}}>#{i+1}</span>
+              {x.item.cover_url && <img src={x.item.cover_url} alt="" style={{width:28,height:28,objectFit:'cover',borderRadius:2,flexShrink:0}} />}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:10,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{x.item.title}</div>
+                <div style={{fontSize:9,color:'#444'}}>{x.fire}🔥 {x.trash}🗑</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
