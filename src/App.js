@@ -246,7 +246,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (tab === 'artists') loadArtists()
     if (tab === 'fans') loadFans()
     if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(0, gamesFilter); loadPlayoffs(); }
-    if (tab === 'shootout') loadCatalog()
+    if (tab === 'shootout') loadCatalog() 
   }, [tab])
 
   async function loadQueue() {
@@ -1562,11 +1562,15 @@ function FanDashboard({ session, onSignOut }) {
   const [pointsFeed, setPointsFeed] = useState([])
   const [voteCounts, setVoteCounts] = useState({})
   const [playoffBracket, setPlayoffBracket] = useState([])
+  const [profileStats, setProfileStats] = useState(null)
 
   const SALARY_CAP = 100
   const COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
 
   useEffect(() => { loadAll() }, [])
+  useEffect(() => {
+    if (tab === 'profile') loadProfileStats()
+  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
     setLoading(true)
@@ -1593,6 +1597,24 @@ function FanDashboard({ session, onSignOut }) {
       setPlayoffBracket(bracket || [])
     }
     setLoading(false)
+  }
+
+  async function loadProfileStats() {
+    if (!fan) return
+    const { data: seasonPts } = await supabase.from('fan_season_points').select('*, seasons(name,status)').eq('fan_id', fan.id).order('created_at', { ascending: false })
+    const { data: shots } = await supabase.from('album_shots').select('net').eq('fan_id', fan.id)
+    const { data: backed } = await supabase.from('backed_artists').select('*, artists(name,tier,points)').eq('fan_id', fan.id).limit(5)
+    const { data: votes } = await supabase.from('fan_votes').select('id').eq('fan_id', fan.id) // eslint-disable-line no-unused-vars
+    const fireShots = shots?.filter(s=>s.net==='fire').length || 0
+    const trashShots = shots?.filter(s=>s.net==='trash').length || 0
+    setProfileStats({
+      seasonPts: seasonPts || [],
+      fireShots,
+      trashShots,
+      totalShots: shots?.length || 0,
+      backed: backed || [],
+      totalVotes: votes?.length || 0,
+    })
   }
 
   async function castVote(quarterId, gameId, artistId, artistName) {
@@ -1772,7 +1794,7 @@ function FanDashboard({ session, onSignOut }) {
         </div>
       )}
       <div style={T.nav}>
-        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT']].map(([id,label])=>(
+        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['profile','MY PROFILE']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -2193,6 +2215,68 @@ function FanDashboard({ session, onSignOut }) {
         {/* ── SHOOTOUT ── */}
        {tab==='shootout' && (
           <AlbumShootout fan={fan} supabase={supabase} onCoinsUpdate={(newCoins)=>setFan(f=>({...f,coins:newCoins}))} />
+        )}
+
+        {/* ── PROFILE ── */}
+        {tab==='profile' && (
+          <div>
+            <div style={{...T.card,background:'linear-gradient(135deg,rgba(255,45,120,0.05),rgba(180,255,60,0.05))',borderColor:'rgba(255,45,120,0.2)',marginBottom:20}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div>
+                  <div style={{width:56,height:56,borderRadius:'50%',background:'linear-gradient(135deg,#ff2d78,#7F77DD)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,fontWeight:700,color:'#fff',marginBottom:10}}>
+                    {(fan?.username||'F').charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{fontSize:14,color:'#fff',fontWeight:500}}>{fan?.username}</div>
+                  <div style={{fontSize:10,color:'#444',marginTop:2}}>{fan?.subscribed?'✓ SUBSCRIBED':'FREE ACCOUNT'}</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>COINS</div>
+                  <div style={{fontSize:24,color:'#ffd60a',fontWeight:700}}>{fan?.coins||0}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
+              <div style={{...T.card,textAlign:'center',padding:'14px 8px'}}>
+                <div style={{fontSize:22,color:'#EF9F27',fontWeight:500}}>{profileStats?.fireShots||0}</div>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginTop:4}}>FIRE SHOTS</div>
+              </div>
+              <div style={{...T.card,textAlign:'center',padding:'14px 8px'}}>
+                <div style={{fontSize:22,color:'#888',fontWeight:500}}>{profileStats?.trashShots||0}</div>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginTop:4}}>TRASH SHOTS</div>
+              </div>
+              <div style={{...T.card,textAlign:'center',padding:'14px 8px'}}>
+                <div style={{fontSize:22,color:'#ff2d78',fontWeight:500}}>{profileStats?.totalVotes||0}</div>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,marginTop:4}}>GAME VOTES</div>
+              </div>
+            </div>
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>SEASON HISTORY</div>
+            {!profileStats?.seasonPts?.length && <div style={{fontSize:11,color:'#222',marginBottom:20}}>No season history yet</div>}
+            {profileStats?.seasonPts?.map(s=>(
+              <div key={s.id} style={{...T.card,marginBottom:8}}>
+                <div>
+                  <div style={{fontSize:11,color:'#fff',marginBottom:3}}>{s.seasons?.name||'Season'}</div>
+                  <span style={{fontSize:9,padding:'2px 7px',background:s.seasons?.status==='active'?'rgba(180,255,60,0.1)':'rgba(255,255,255,0.05)',color:s.seasons?.status==='active'?'#b4ff3c':'#444'}}>{s.seasons?.status?.toUpperCase()}</span>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:18,color:'#ffd60a',fontWeight:700}}>{s.points}</div>
+                  <div style={{fontSize:9,color:'#333',marginTop:2}}>PTS</div>
+                </div>
+              </div>
+            ))}
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12,marginTop:8}}>BACKED ARTISTS</div>
+            {!profileStats?.backed?.length && <div style={{fontSize:11,color:'#222'}}>No backed artists yet</div>}
+            {profileStats?.backed?.map((b,i)=>(
+              <div key={b.id} style={{...T.card,marginBottom:8,borderLeft:`3px solid ${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][i%5]}`}}>
+                <div>
+                  <div style={{fontSize:11,color:'#fff',marginBottom:3}}>{b.artists?.name}</div>
+                  <div style={{fontSize:9,color:'#444'}}>{b.artists?.tier?.toUpperCase()} · {b.artists?.points||0} pts</div>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
       </div>
