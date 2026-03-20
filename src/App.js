@@ -841,8 +841,24 @@ function AdminDashboard({ session, onSignOut }) {
                 <option value="song">Song — 1 coin</option>
                 <option value="album">Album — 2 coins</option>
               </select>
-              <div style={T.label}>COVER IMAGE URL</div>
-              <input style={T.input} value={catalogForm.cover_url} onChange={e=>setCatalogForm({...catalogForm,cover_url:e.target.value})} placeholder="https://..." />
+              <div style={T.label}>COVER IMAGE</div>
+              <label style={{...T.uploadBox, marginBottom:12}}>
+                <div style={{fontSize:10,color:'#444',marginBottom:4}}>
+                  {catalogForm.cover_url ? '✓ Image uploaded' : 'Click to upload cover art'}
+                </div>
+                <div style={{fontSize:9,color:'#333'}}>JPG or PNG · Max 5MB</div>
+                <input type="file" accept="image/*" style={{display:'none'}} onChange={async(e)=>{
+                  const file = e.target.files[0]
+                  if (!file) return
+                  const ext = file.name.split('.').pop()
+                  const path = `shootout/${Date.now()}.${ext}`
+                  const { error } = await supabase.storage.from('album-images').upload(path, file)
+                  if (error) { setCatalogMsg('Upload error: '+error.message); return }
+                  const { data } = supabase.storage.from('album-images').getPublicUrl(path)
+                  setCatalogForm(f=>({...f, cover_url: data.publicUrl}))
+                  setCatalogMsg('Image uploaded!')
+                }} />
+              </label>
               {catalogForm.cover_url && <img src={catalogForm.cover_url} alt="preview" style={{width:80,height:80,objectFit:'cover',borderRadius:4,marginBottom:12,border:'1px solid #222'}} />}
               {catalogMsg && <div style={{fontSize:11,color:catalogMsg.startsWith('Error')?'#ff2d78':'#b4ff3c',marginBottom:12}}>{catalogMsg}</div>}
               <button style={T.submitBtn} onClick={async()=>{
@@ -2228,7 +2244,7 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
   const [instr, setInstr] = useState('Search for a song or album, then click a net to shoot')
   const [msg, setMsg] = useState('')
   const canvasRef = React.useRef(null)
-  const stateRef = React.useRef({ balls:[], particles:[], selected:null, stats:{ pts:0, fire:0, trash:0, shots:0, streak:0 } })
+  const stateRef = React.useRef({ balls:[], particles:[], selected:null, stats:{ pts:0, fire:0, trash:0, shots:0, streak:0 }, imgCache:{}, fireStack:[], trashStack:[] })
 
   const W=680, H=430
   const FIRE={x:572, y:90, r:22}
@@ -2304,6 +2320,11 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
     const tgt = net==='fire' ? FIRE : TRASH
     const ball = { item, net, tx:tgt.x, ty:tgt.y, t:0, color }
     stateRef.current.balls = [...stateRef.current.balls, ball]
+    if (net === 'fire') {
+      stateRef.current.fireStack = [...(stateRef.current.fireStack||[]), { ...selected, color: COLORS[catalog.findIndex(c=>c.id===selected.id)%COLORS.length] }].slice(-8)
+    } else {
+      stateRef.current.trashStack = [...(stateRef.current.trashStack||[]), { ...selected, color: COLORS[catalog.findIndex(c=>c.id===selected.id)%COLORS.length] }].slice(-8)
+    }
     const sm = net==='fire' && newStats.streak>=3 ? ` streak ${newStats.streak}!` : ''
     setInstr(net==='fire' ? `+${earned} pts — fire!${sm}` : `+${earned} pts — trashed`)
     setMsg(`-${cost} coin${cost>1?'s':''}`)
@@ -2330,6 +2351,16 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
   function arcPos(t,sx,sy,tx,ty){
     const cx=(sx+tx)/2,cy=Math.min(sy,ty)-190,u=1-t
     return{x:u*u*sx+2*u*t*cx+t*t*tx,y:u*u*sy+2*u*t*cy+t*t*ty}
+  }
+  function loadImg(url) {
+    if (!url) return null
+    if (stateRef.current.imgCache[url]) return stateRef.current.imgCache[url]
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = url
+    img.onload = () => { stateRef.current.imgCache[url] = img }
+    stateRef.current.imgCache[url] = img
+    return img
   }
 
   useEffect(()=>{
@@ -2394,33 +2425,113 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
       ctx.fillText('fire net  +10 pts',x,y+58)
     }
 
-    function drawTrashCan(){
-      const x=TRASH.x,y=TRASH.y
-      const ct=y+y*0.5*0.1,cb=ct+76,tw=50,bw=40
-      drawBoard(x);drawRim(x,'#3a7a28',y)
+   function drawTrashCan(){
+      const x=TRASH.x, y=TRASH.y
+      const ct=y+11, cb=ct+80, tw=52, bw=42
+      drawBoard(x); drawRim(x,'#888780',y)
+
+      // Stacked balls inside
+      const stack = stateRef.current.trashStack || []
+      const maxV = 6
+      const visible = stack.slice(-maxV)
+      const slotH = (cb - ct - 8) / maxV
+      ctx.save()
+      ctx.beginPath()
+      ctx.moveTo(x-tw/2+2,ct+2);ctx.lineTo(x+tw/2-2,ct+2)
+      ctx.lineTo(x+bw/2-2,cb-2);ctx.lineTo(x-bw/2+2,cb-2)
+      ctx.closePath(); ctx.clip()
+      visible.forEach((item,i)=>{
+        const ry = cb - 4 - (i+0.5)*slotH
+        const sw = bw - 6
+        if (item.cover_url) {
+          const img = loadImg(item.cover_url)
+          if (img && img.complete && img.naturalWidth > 0) {
+            ctx.save()
+            ctx.beginPath(); ctx.ellipse(x, ry, sw*0.4, slotH*0.35, 0, 0, Math.PI*2); ctx.clip()
+            ctx.drawImage(img, x-sw*0.4, ry-slotH*0.35, sw*0.8, slotH*0.7)
+            ctx.restore()
+          } else {
+            ctx.fillStyle = item.color
+            ctx.beginPath(); ctx.ellipse(x, ry, sw*0.4, slotH*0.35, 0, 0, Math.PI*2); ctx.fill()
+          }
+        } else {
+          ctx.fillStyle = item.color
+          ctx.beginPath(); ctx.ellipse(x, ry, sw*0.4, slotH*0.35, 0, 0, Math.PI*2); ctx.fill()
+        }
+      })
+      ctx.restore()
+
+      // Can body — silver/grey metallic transparent
       ctx.save()
       ctx.beginPath()
       ctx.moveTo(x-tw/2,ct);ctx.lineTo(x+tw/2,ct)
       ctx.lineTo(x+bw/2,cb);ctx.lineTo(x-bw/2,cb)
       ctx.closePath()
-      ctx.fillStyle='rgba(58,122,40,0.15)';ctx.fill()
-      ctx.strokeStyle='rgba(48,110,30,0.9)';ctx.lineWidth=2.5;ctx.stroke()
-      ctx.strokeStyle='rgba(48,110,30,0.55)';ctx.lineWidth=1.5
-      ctx.beginPath();ctx.moveTo(x,ct);ctx.lineTo(x,cb);ctx.stroke()
-      ctx.strokeStyle='rgba(48,110,30,0.35)';ctx.lineWidth=1
-      for(let r=1;r<=3;r++){
-        const ry=ct+76*(r/4),prog=r/4
-        const lx=x-tw/2+(tw-bw)/2*prog,rx=x+tw/2-(tw-bw)/2*prog
-        ctx.beginPath();ctx.moveTo(lx,ry);ctx.lineTo(rx,ry);ctx.stroke()
+      ctx.fillStyle='rgba(180,180,185,0.12)'; ctx.fill()
+      ctx.strokeStyle='rgba(160,160,168,0.85)'; ctx.lineWidth=2; ctx.stroke()
+
+      // Vertical center line
+      ctx.strokeStyle='rgba(160,160,168,0.4)'; ctx.lineWidth=1.2
+      ctx.beginPath(); ctx.moveTo(x,ct); ctx.lineTo(x,cb); ctx.stroke()
+
+      // Horizontal ridges
+      for(let r=1;r<=4;r++){
+        const ry=ct+80*(r/5), prog=r/5
+        const lx=x-tw/2+(tw-bw)/2*prog, rx=x+tw/2-(tw-bw)/2*prog
+        ctx.strokeStyle='rgba(160,160,168,0.3)'; ctx.lineWidth=0.8
+        ctx.beginPath(); ctx.moveTo(lx,ry); ctx.lineTo(rx,ry); ctx.stroke()
       }
-      const lidH=12,lidY=ct-lidH
-      ctx.fillStyle='rgba(68,145,48,0.95)';ctx.strokeStyle='rgba(38,100,22,0.95)';ctx.lineWidth=2
-      ctx.beginPath();ctx.roundRect(x-tw/2-3,lidY,tw+6,lidH,4);ctx.fill();ctx.stroke()
-      ctx.strokeStyle='rgba(38,100,22,0.95)';ctx.lineWidth=3;ctx.lineCap='round'
-      ctx.beginPath();ctx.arc(x,lidY+2,9,Math.PI,0);ctx.stroke()
-      ctx.lineCap='butt';ctx.restore()
-      ctx.fillStyle='rgba(38,100,22,0.85)';ctx.font='500 11px sans-serif';ctx.textAlign='center'
+
+      // Bottom oval
+      ctx.strokeStyle='rgba(160,160,168,0.7)'; ctx.lineWidth=1.5
+      ctx.beginPath(); ctx.ellipse(x,cb,bw/2,4,0,0,Math.PI*2); ctx.stroke()
+      ctx.fillStyle='rgba(160,160,168,0.15)'
+      ctx.beginPath(); ctx.ellipse(x,cb,bw/2,4,0,0,Math.PI*2); ctx.fill()
+
+      
+      // Count badge
+      if (stack.length > 0) {
+        ctx.fillStyle='rgba(100,100,108,0.9)'
+        ctx.beginPath(); ctx.arc(x+tw/2+8,ct-6,10,0,Math.PI*2); ctx.fill()
+        ctx.fillStyle='#fff'; ctx.font='500 9px sans-serif'; ctx.textAlign='center'
+        ctx.fillText(stack.length, x+tw/2+8, ct-3)
+      }
+      ctx.restore()
+
+      ctx.fillStyle='rgba(140,140,148,0.85)'; ctx.font='500 11px sans-serif'; ctx.textAlign='center'
       ctx.fillText('trash  +10 pts',x,cb+18)
+    }
+
+    function drawFireStack(){
+      const x=FIRE.x, y=FIRE.y
+      const stack = stateRef.current.fireStack || []
+      if (stack.length === 0) return
+      const maxV = 6
+      const visible = stack.slice(-maxV)
+      visible.forEach((item,i)=>{
+        const angle = (i/maxV)*Math.PI*2
+        const r = 28 + i*4
+        const bx = x + Math.cos(angle)*r*0.3
+        const by = y + 40 + i*8
+        const img = item.cover_url ? loadImg(item.cover_url) : null
+        ctx.save()
+        ctx.beginPath(); ctx.arc(bx, by, 10, 0, Math.PI*2)
+        if (img && img.complete && img.naturalWidth > 0) {
+          ctx.clip(); ctx.drawImage(img, bx-10, by-10, 20, 20)
+        } else {
+          ctx.fillStyle = item.color; ctx.fill()
+        }
+        ctx.restore()
+        ctx.strokeStyle='rgba(239,159,39,0.5)'; ctx.lineWidth=1
+        ctx.beginPath(); ctx.arc(bx, by, 10, 0, Math.PI*2); ctx.stroke()
+      })
+      // Count badge
+      if (stack.length > 0) {
+        ctx.fillStyle='rgba(186,117,23,0.9)'
+        ctx.beginPath(); ctx.arc(x+28,y-28,10,0,Math.PI*2); ctx.fill()
+        ctx.fillStyle='#fff'; ctx.font='500 9px sans-serif'; ctx.textAlign='center'
+        ctx.fillText(stack.length, x+28, y-25)
+      }
     }
 
     function drawPad(){
@@ -2431,12 +2542,19 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
       ctx.beginPath();ctx.arc(PAD.x,PAD.y,26,0,Math.PI*2);ctx.stroke()
       if(sel){
         if (sel.cover_url) {
-          const img = new Image()
-          img.src = sel.cover_url
-          ctx.save()
-          ctx.beginPath();ctx.arc(PAD.x,PAD.y,17,0,Math.PI*2);ctx.clip()
-          ctx.drawImage(img,PAD.x-17,PAD.y-17,34,34)
-          ctx.restore()
+          const img = loadImg(sel.cover_url)
+          if (img && img.complete && img.naturalWidth > 0) {
+            ctx.save()
+            ctx.beginPath();ctx.arc(PAD.x,PAD.y,17,0,Math.PI*2);ctx.clip()
+            ctx.drawImage(img,PAD.x-17,PAD.y-17,34,34)
+            ctx.restore()
+          } else {
+            const idx = catalog.findIndex(c=>c.id===sel.id)
+            ctx.fillStyle=COLORS[idx%COLORS.length]
+            ctx.beginPath();ctx.arc(PAD.x,PAD.y,17,0,Math.PI*2);ctx.fill()
+            ctx.fillStyle='#fff';ctx.font='bold 8px sans-serif';ctx.textAlign='center'
+            ctx.fillText(sel.title?.slice(0,2).toUpperCase(),PAD.x,PAD.y+3)
+          }
         } else {
           const idx = catalog.findIndex(c=>c.id===sel.id)
           ctx.fillStyle=COLORS[idx%COLORS.length]
@@ -2456,14 +2574,22 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
         const pos=arcPos(t,PAD.x,PAD.y,b.tx,b.ty)
         ctx.save();ctx.translate(pos.x,pos.y);ctx.rotate(b.t*Math.PI*8)
         if (b.item.cover_url) {
-          const img = new Image()
-          img.src = b.item.cover_url
-          ctx.save()
-          ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.clip()
-          ctx.drawImage(img,-15,-15,30,30)
-          ctx.restore()
-          ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1
-          ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.stroke()
+          const img = loadImg(b.item.cover_url)
+          if (img && img.complete && img.naturalWidth > 0) {
+            ctx.save()
+            ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.clip()
+            ctx.drawImage(img,-15,-15,30,30)
+            ctx.restore()
+            ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1
+            ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.stroke()
+          } else {
+            ctx.shadowColor='rgba(0,0,0,0.28)';ctx.shadowBlur=6
+            ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2)
+            ctx.fillStyle=b.color;ctx.fill()
+            ctx.shadowBlur=0
+            ctx.fillStyle='#fff';ctx.font='bold 7px sans-serif';ctx.textAlign='center'
+            ctx.fillText(b.item.title?.slice(0,2).toUpperCase(),0,3)
+          }
         } else {
           ctx.shadowColor='rgba(0,0,0,0.28)';ctx.shadowBlur=6
           ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2)
@@ -2489,7 +2615,7 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
     }
 
     function loop(){
-      drawCourt();drawFireNet();drawTrashCan();drawPad();drawBalls();drawParticles()
+      drawCourt();drawFireNet();drawTrashCan();drawFireStack();drawPad();drawBalls();drawParticles()
       animId=requestAnimationFrame(loop)
     }
     loop()
