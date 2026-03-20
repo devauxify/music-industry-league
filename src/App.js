@@ -1578,6 +1578,10 @@ function FanDashboard({ session, onSignOut }) {
   const [playoffBracket, setPlayoffBracket] = useState([])
   const [profileStats, setProfileStats] = useState(null)
   const [prizePool, setPrizePool] = useState(null)
+  const [groups, setGroups] = useState([])
+  const [groupForm, setGroupForm] = useState({ name:'' })
+  const [joinCode, setJoinCode] = useState('')
+  const [groupMsg, setGroupMsg] = useState('')
   const [prizeLeaderboard, setPrizeLeaderboard] = useState([])
   const [pastWinners, setPastWinners] = useState([])
 
@@ -1588,6 +1592,7 @@ function FanDashboard({ session, onSignOut }) {
   useEffect(() => {
     if (tab === 'profile') loadProfileStats()
     if (tab === 'prizes') loadPrizes()
+    if (tab === 'groups') loadGroups()
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
@@ -1643,6 +1648,52 @@ function FanDashboard({ session, onSignOut }) {
     setPrizeLeaderboard(fans || [])
     const { data: past } = await supabase.from('prize_winners').select('*, fans(username)').order('created_at', { ascending: false }).limit(12)
     setPastWinners(past || [])
+  }
+
+  async function loadGroups() {
+    if (!fan) return
+    const { data } = await supabase
+      .from('group_members')
+      .select('*, groups(id, name, invite_code, created_by, created_at)')
+      .eq('fan_id', fan.id)
+    const groupIds = (data||[]).map(m=>m.groups?.id).filter(Boolean)
+    if (groupIds.length === 0) { setGroups([]); return }
+    const groupsWithMembers = await Promise.all(groupIds.map(async(gid)=>{
+      const { data: members } = await supabase
+        .from('group_members')
+        .select('*, fans(username)')
+        .eq('group_id', gid)
+      const group = data.find(d=>d.groups?.id===gid)?.groups
+      return { ...group, members: members||[] }
+    }))
+    setGroups(groupsWithMembers)
+  }
+
+  async function createGroup() {
+    if (!groupForm.name.trim()) { setGroupMsg('Enter a group name'); return }
+    const { data, error } = await supabase.from('groups').insert({ name: groupForm.name.trim(), created_by: fan.id }).select().single()
+    if (error) { setGroupMsg('Error: '+error.message); return }
+    await supabase.from('group_members').insert({ group_id: data.id, fan_id: fan.id, role: 'admin' })
+    setGroupForm({ name:'' })
+    setGroupMsg('Group created!')
+    loadGroups()
+  }
+
+  async function joinGroup() {
+    if (!joinCode.trim()) { setGroupMsg('Enter an invite code'); return }
+    const { data: group, error } = await supabase.from('groups').select('*').eq('invite_code', joinCode.trim()).single()
+    if (error||!group) { setGroupMsg('Group not found — check the code'); return }
+    const { data: existing } = await supabase.from('group_members').select('id').eq('group_id', group.id).eq('fan_id', fan.id).single()
+    if (existing) { setGroupMsg('Already in this group'); return }
+    await supabase.from('group_members').insert({ group_id: group.id, fan_id: fan.id, role: 'member' })
+    setJoinCode('')
+    setGroupMsg(`Joined ${group.name}!`)
+    loadGroups()
+  }
+
+  async function leaveGroup(groupId) {
+    await supabase.from('group_members').delete().eq('group_id', groupId).eq('fan_id', fan.id)
+    loadGroups()
   }
 
   async function castVote(quarterId, gameId, artistId, artistName) {
@@ -1750,21 +1801,24 @@ function FanDashboard({ session, onSignOut }) {
     setChatInput('')
   }
 
-  async function draftArtist(artist, slot) {
+  async function draftArtistToSlot(artist, slot) {
     if (!season || !fan) return
-    const used = draftPicks.reduce((sum, p) => sum + p.salary, 0)
-    if (used + artist.salary > SALARY_CAP) { alert(`Over salary cap! ${SALARY_CAP - used} remaining`); return }
-    if (draftPicks.length >= 6) { alert('Roster full — 5 starters + 1 bench'); return }
-    if (draftPicks.find(p => p.artist_id === artist.id)) { alert('Already on your roster'); return }
+    if (draftPicks.find(p=>p.artist_id===artist.id)) { return }
+    const isStarter = slot !== 'bench'
+    const slotName = isStarter ? 'starter' : 'bench'
+    if (isStarter && draftPicks.filter(p=>p.slot==='starter').length >= 5) return
+    if (!isStarter && draftPicks.find(p=>p.slot==='bench')) return
+    const cost = 1
+    if ((fan.coins||0) < cost) { alert('Not enough coins'); return }
     let currentDraft = draft
     if (!currentDraft) {
       const { data } = await supabase.from('drafts').insert({ fan_id: fan.id, season_id: season.id, salary_used: 0 }).select().single()
       currentDraft = data
       setDraft(data)
     }
-    const isStarter = draftPicks.filter(p => p.slot !== 'bench').length < 5
-    await supabase.from('draft_picks').insert({ draft_id: currentDraft.id, artist_id: artist.id, slot: isStarter ? 'starter' : 'bench', salary: artist.salary })
-    await supabase.from('drafts').update({ salary_used: used + artist.salary }).eq('id', currentDraft.id)
+    await supabase.from('draft_picks').insert({ draft_id: currentDraft.id, artist_id: artist.id, slot: slotName, salary: artist.salary||10 })
+    await supabase.from('fans').update({ coins: (fan.coins||0) - cost }).eq('id', fan.id)
+    setFan(f=>({...f, coins:(f.coins||0)-cost}))
     loadAll()
   }
 
@@ -1822,7 +1876,7 @@ function FanDashboard({ session, onSignOut }) {
         </div>
       )}
       <div style={T.nav}>
-        {[['league','THE LEAGUE'],['draft','MY DRAFT'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['prizes','PRIZES'],['profile','MY PROFILE']].map(([id,label])=>(
+        {[['league','THE LEAGUE'],['roster','MY ROSTER'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['prizes','PRIZES'],['groups','GROUPS'],['profile','MY PROFILE']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -1888,82 +1942,102 @@ function FanDashboard({ session, onSignOut }) {
           </div>
         )}
 
-        {/* ── MY DRAFT ── */}
-        {tab==='draft' && (
+        {/* ── MY ROSTER ── */}
+        {tab==='roster' && (
           <div>
-            <div style={{...T.card,background:'rgba(255,215,0,0.03)',borderColor:'rgba(255,215,0,0.15)',marginBottom:20}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <div>
-                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>SALARY CAP</div>
-                  <div style={{fontSize:20,color:'#ffd60a',fontWeight:700}}>${salaryLeft} <span style={{fontSize:11,color:'#444'}}>remaining of ${SALARY_CAP}</span></div>
-                </div>
-                <div style={{textAlign:'right'}}>
-                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>ROSTER</div>
-                  <div style={{fontSize:20,color:'#fff',fontWeight:700}}>{draftPicks.length}<span style={{fontSize:11,color:'#444'}}>/6</span></div>
-                </div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:3}}>MY ROSTERS</div>
+              <div style={{fontSize:10,color:'#444'}}>1 roster · {draftPicks.filter(p=>p.slot!=='bench').length}/5 starters · {draftPicks.filter(p=>p.slot==='bench').length}/1 bench</div>
+            </div>
+
+            <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+              <div style={{padding:'6px 16px',background:'rgba(180,255,60,0.1)',border:'1px solid #b4ff3c',borderRadius:4,fontSize:11,color:'#b4ff3c',cursor:'pointer'}}>Main Roster</div>
+            </div>
+
+            <div style={{border:'1px solid #111',borderRadius:6,padding:16,marginBottom:20}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+                <div style={{fontSize:13,color:'#fff',fontWeight:500}}>Main Roster</div>
+                <div style={{fontSize:10,color:'#444'}}>5 STARTERS + 1 BENCH · 1 coin to add · free to remove</div>
               </div>
-              <div style={{background:'#111',borderRadius:2,height:3,marginTop:12}}>
-                <div style={{background:'#ffd60a',height:3,borderRadius:2,width:`${(salaryUsed/SALARY_CAP)*100}%`,transition:'width 0.4s'}} />
+
+              {[1,2,3,4,5].map(slot=>{
+                const pick = draftPicks.find((p,i)=>p.slot==='starter'&&draftPicks.filter(x=>x.slot==='starter').indexOf(p)===slot-1)
+                return (
+                  <div key={slot} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',background:'rgba(255,255,255,0.02)',border:'1px solid #111',borderRadius:4,marginBottom:8}}>
+                    {pick ? (
+                      <>
+                        <div style={{width:36,height:36,borderRadius:'50%',background:`linear-gradient(135deg,${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][slot-1]},${['#7F77DD','#378ADD','#ff2d78','#b4ff3c','#ffd60a'][slot-1]})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'#fff',flexShrink:0}}>
+                          {pick.artists?.name?.slice(0,2).toUpperCase()}
+                        </div>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:12,color:'#fff'}}>{pick.artists?.name}</div>
+                          <div style={{fontSize:9,letterSpacing:1,color:pick.artists?.tier==='superstar'?'#ffd60a':'#b4ff3c'}}>{pick.artists?.tier?.toUpperCase()} · {pick.artists?.points||0}pts</div>
+                        </div>
+                        <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontSize:16,fontFamily:'monospace'}} onClick={()=>removePick(pick.id,pick.salary)}>✕</button>
+                      </>
+                    ) : (
+                      <div style={{flex:1,textAlign:'center',fontSize:10,color:'#333',letterSpacing:2}}>SLOT {slot} — SELECT BELOW</div>
+                    )}
+                  </div>
+                )
+              })}
+
+              <div style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,45,120,0.15)',borderRadius:4,marginTop:4}}>
+                {draftPicks.find(p=>p.slot==='bench') ? (
+                  <>
+                    <div style={{fontSize:9,color:'#ff2d78',letterSpacing:2,minWidth:40}}>BENCH</div>
+                    <div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#ff2d78,#ff9500)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'#fff',flexShrink:0}}>
+                      {draftPicks.find(p=>p.slot==='bench')?.artists?.name?.slice(0,2).toUpperCase()}
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,color:'#fff'}}>{draftPicks.find(p=>p.slot==='bench')?.artists?.name}</div>
+                      <div style={{fontSize:9,color:'#444'}}>{draftPicks.find(p=>p.slot==='bench')?.artists?.tier?.toUpperCase()}</div>
+                    </div>
+                    <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontSize:16}} onClick={()=>{ const b=draftPicks.find(p=>p.slot==='bench'); removePick(b.id,b.salary) }}>✕</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{fontSize:9,color:'#ff2d78',letterSpacing:2,minWidth:40}}>BENCH</div>
+                    <div style={{flex:1,textAlign:'center',fontSize:10,color:'#333',letterSpacing:2}}>BENCH SLOT — SELECT BELOW</div>
+                  </>
+                )}
               </div>
             </div>
 
-            {draftPicks.length > 0 && (
-              <div style={{marginBottom:24}}>
-                <div style={T.sectionTitle}>YOUR ROSTER</div>
-                {draftPicks.map((p,i)=>(
-                  <div key={p.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}`}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <div>
-                        <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{p.artists?.name}</div>
-                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                          <span style={{...T.tag,background:p.slot==='bench'?'rgba(255,255,255,0.05)':'rgba(255,45,120,0.1)',color:p.slot==='bench'?'#444':'#ff2d78'}}>{p.slot.toUpperCase()}</span>
-                          <span style={{fontSize:10,color:'#444'}}>${p.salary} salary</span>
-                        </div>
-                      </div>
-                      <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontFamily:'monospace',fontSize:16}} onClick={()=>removePick(p.id,p.salary)}>✕</button>
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:14}}>ADD TO ROSTER (1 coin per slot)</div>
+
+            {artists.map((a,i)=>{
+              const picked = draftPicks.find(p=>p.artist_id===a.id)
+              const TIER_COLORS = {superstar:'#ffd60a', rising:'#b4ff3c', newcomer:'#888'}
+              const tierColor = TIER_COLORS[a.tier]||'#888'
+              const AV_COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
+              return (
+                <div key={a.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',border:'1px solid #111',borderRadius:6,marginBottom:8,opacity:picked?0.5:1}}>
+                  <div style={{width:40,height:40,borderRadius:'50%',background:`linear-gradient(135deg,${AV_COLORS[i%AV_COLORS.length]},${AV_COLORS[(i+3)%AV_COLORS.length]})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700,color:'#fff',flexShrink:0}}>
+                    {a.name?.slice(0,2).toUpperCase()}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{a.name}</div>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <span style={{fontSize:9,color:tierColor,letterSpacing:1}}>{(a.tier||'rising').toUpperCase()}</span>
+                      <span style={{fontSize:9,color:'#333'}}>·</span>
+                      <span style={{fontSize:9,color:'#444'}}>{a.points||0}pts</span>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-
-            <div style={T.sectionTitle}>DRAFT SUPERSTARS</div>
-            {artists.filter(a=>a.tier==='superstar').map((a,i)=>{
-              const picked = draftPicks.find(p=>p.artist_id===a.id)
-              const canAfford = salaryLeft >= a.salary
-              return (
-                <div key={a.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}`,opacity:picked?0.5:1}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div>
-                      <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{a.name}</div>
-                      <div style={{fontSize:10,color:'#444'}}>{a.genre||'No genre'} · {a.points||0} pts</div>
-                    </div>
-                    <div style={{display:'flex',gap:12,alignItems:'center'}}>
-                      <div style={{fontSize:16,color:'#ffd60a',fontWeight:700}}>${a.salary}</div>
-                      {picked ? <span style={{...T.tag,background:'rgba(180,255,60,0.1)',color:'#b4ff3c'}}>DRAFTED</span>
-                        : <button style={{...T.btn,opacity:canAfford?1:0.3}} onClick={()=>canAfford&&draftArtist(a,'starter')} disabled={!canAfford}>DRAFT</button>}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-
-            <div style={{...T.sectionTitle,marginTop:16}}>DRAFT RISING STARS</div>
-            {artists.filter(a=>a.tier==='rising').map((a,i)=>{
-              const picked = draftPicks.find(p=>p.artist_id===a.id)
-              const canAfford = salaryLeft >= a.salary
-              return (
-                <div key={a.id} style={{...T.card,borderLeft:`3px solid ${COLORS[i%COLORS.length]}66`}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div>
-                      <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{a.name}</div>
-                      <div style={{fontSize:10,color:'#444'}}>{a.genre||'No genre'} · {a.points||0} pts</div>
-                    </div>
-                    <div style={{display:'flex',gap:12,alignItems:'center'}}>
-                      <div style={{fontSize:16,color:'#b4ff3c',fontWeight:700}}>${a.salary}</div>
-                      {picked ? <span style={{...T.tag,background:'rgba(180,255,60,0.1)',color:'#b4ff3c'}}>DRAFTED</span>
-                        : <button style={{...T.greenBtn,opacity:canAfford?1:0.3}} onClick={()=>canAfford&&draftArtist(a,'starter')} disabled={!canAfford}>DRAFT</button>}
-                    </div>
+                  <div style={{display:'flex',gap:4}}>
+                    {picked ? (
+                      <span style={{fontSize:9,color:'#b4ff3c',border:'1px solid rgba(180,255,60,0.3)',padding:'4px 10px',borderRadius:3}}>ADDED</span>
+                    ) : (
+                      <>
+                        {[1,2,3,4,5].map(s=>{
+                          const slotTaken = draftPicks.filter(p=>p.slot==='starter')[s-1]
+                          return (
+                            <button key={s} style={{background:slotTaken?'rgba(255,255,255,0.05)':'rgba(180,255,60,0.08)',border:`1px solid ${slotTaken?'#222':'rgba(180,255,60,0.2)'}`,color:slotTaken?'#333':'#b4ff3c',padding:'4px 7px',fontSize:9,cursor:slotTaken?'default':'pointer',fontFamily:'monospace',borderRadius:3}} onClick={()=>!slotTaken&&draftArtistToSlot(a,s)}>S{s}</button>
+                          )
+                        })}
+                        <button style={{background:'rgba(255,45,120,0.08)',border:'1px solid rgba(255,45,120,0.2)',color:'#ff2d78',padding:'4px 7px',fontSize:9,cursor:'pointer',fontFamily:'monospace',borderRadius:3}} onClick={()=>draftArtistToSlot(a,'bench')}>BN</button>
+                      </>
+                    )}
                   </div>
                 </div>
               )
@@ -2301,6 +2375,146 @@ function FanDashboard({ session, onSignOut }) {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── GROUPS ── */}
+        {tab==='groups' && (
+          <div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:3}}>MY GROUPS</div>
+              <button style={{...T.greenBtn,fontSize:9,padding:'6px 14px'}} onClick={()=>setGroupMsg('')}>+ CREATE</button>
+            </div>
+
+            <div style={{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}}>
+              <input
+                style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px 12px',fontSize:11,fontFamily:'monospace',flex:1,minWidth:160}}
+                placeholder="Group name..."
+                value={groupForm.name}
+                onChange={e=>setGroupForm({name:e.target.value})}
+                onKeyDown={e=>e.key==='Enter'&&createGroup()}
+              />
+              <button style={{...T.greenBtn,fontSize:9,padding:'8px 16px'}} onClick={createGroup}>CREATE →</button>
+            </div>
+
+            <div style={{display:'flex',gap:8,marginBottom:24,flexWrap:'wrap'}}>
+              <input
+                style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px 12px',fontSize:11,fontFamily:'monospace',flex:1,minWidth:160}}
+                placeholder="Enter invite code..."
+                value={joinCode}
+                onChange={e=>setJoinCode(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&joinGroup()}
+              />
+              <button style={{...T.btn,fontSize:9,padding:'8px 16px'}} onClick={joinGroup}>JOIN →</button>
+            </div>
+
+            {groupMsg && <div style={{fontSize:11,color:groupMsg.startsWith('Error')?'#ff2d78':'#b4ff3c',marginBottom:16}}>{groupMsg}</div>}
+
+            {groups.length===0 && <div style={{fontSize:11,color:'#222'}}>No groups yet — create one or join with an invite code</div>}
+
+            {groups.map(g=>(
+              <div key={g.id} style={{...T.card,marginBottom:14}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:14,color:'#fff',fontWeight:500,marginBottom:4}}>{g.name}</div>
+                    <div style={{fontSize:10,color:'#444'}}>{g.members?.length||0} members</div>
+                  </div>
+                  <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontFamily:'monospace',fontSize:10}} onClick={()=>leaveGroup(g.id)}>LEAVE</button>
+                </div>
+
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:14}}>
+                  {g.members?.map(m=>(
+                    <span key={m.id} style={{fontSize:10,color:m.fan_id===fan.id?'#b4ff3c':'#555',padding:'4px 10px',border:`1px solid ${m.fan_id===fan.id?'rgba(180,255,60,0.3)':'rgba(255,255,255,0.08)'}`,borderRadius:99}}>
+                      {m.fan_id===fan.id?'@you':`@${m.fans?.username||'fan'}`}
+                    </span>
+                  ))}
+                </div>
+
+                <div style={{borderTop:'1px solid #111',paddingTop:12,marginBottom:12}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>ROSTERS IN GROUP</div>
+                  {g.members?.map((m,mi)=>(
+                    <div key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',background:'rgba(255,255,255,0.02)',borderRadius:4,marginBottom:6}}>
+                      <div style={{fontSize:10,color:m.fan_id===fan.id?'#b4ff3c':'#555',minWidth:80}}>
+                        {m.fan_id===fan.id?'@you':`@${m.fans?.username||'fan'}`}
+                      </div>
+                      <div style={{flex:1,display:'flex',gap:4}}>
+                        {[0,1,2,3,4].map(si=>(
+                          <div key={si} style={{width:22,height:22,borderRadius:'50%',background:`${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}33`,border:`1px solid ${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}44`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}}>
+                            S{si+1}
+                          </div>
+                        ))}
+                        <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(255,45,120,0.1)',border:'1px solid rgba(255,45,120,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:'#ff2d78'}}>BN</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+               <div style={{borderTop:'1px solid #111',paddingTop:12,marginBottom:12}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>ROSTERS IN GROUP</div>
+                  {g.members?.map((m,mi)=>(
+                    <div key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',background:'rgba(255,255,255,0.02)',borderRadius:4,marginBottom:6}}>
+                      <div style={{fontSize:10,color:m.fan_id===fan.id?'#b4ff3c':'#555',minWidth:80}}>
+                        {m.fan_id===fan.id?'@you':`@${m.fans?.username||'fan'}`}
+                      </div>
+                      <div style={{flex:1,display:'flex',gap:4}}>
+                        {[0,1,2,3,4].map(si=>(
+                          <div key={si} style={{width:22,height:22,borderRadius:'50%',background:`${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}33`,border:`1px solid ${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}44`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}}>
+                            S{si+1}
+                          </div>
+                        ))}
+                        <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(255,45,120,0.1)',border:'1px solid rgba(255,45,120,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:'#ff2d78'}}>BN</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{borderTop:'1px solid #111',paddingTop:12,marginBottom:12}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>ROSTERS IN GROUP</div>
+                  {g.members?.map((m,mi)=>(
+                    <div key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',background:'rgba(255,255,255,0.02)',borderRadius:4,marginBottom:6}}>
+                      <div style={{fontSize:10,color:m.fan_id===fan.id?'#b4ff3c':'#555',minWidth:80}}>
+                        {m.fan_id===fan.id?'@you':`@${m.fans?.username||'fan'}`}
+                      </div>
+                      <div style={{flex:1,display:'flex',gap:4}}>
+                        {[0,1,2,3,4].map(si=>(
+                          <div key={si} style={{width:22,height:22,borderRadius:'50%',background:`${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}33`,border:`1px solid ${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}44`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}}>
+                            S{si+1}
+                          </div>
+                        ))}
+                        <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(255,45,120,0.1)',border:'1px solid rgba(255,45,120,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:'#ff2d78'}}>BN</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{borderTop:'1px solid #111',paddingTop:12,marginBottom:12}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>ROSTERS IN GROUP</div>
+                  {g.members?.map((m,mi)=>(
+                    <div key={m.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',background:'rgba(255,255,255,0.02)',borderRadius:4,marginBottom:6}}>
+                      <div style={{fontSize:10,color:m.fan_id===fan.id?'#b4ff3c':'#555',minWidth:80}}>
+                        {m.fan_id===fan.id?'@you':`@${m.fans?.username||'fan'}`}
+                      </div>
+                      <div style={{flex:1,display:'flex',gap:4}}>
+                        {[0,1,2,3,4].map(si=>(
+                          <div key={si} style={{width:22,height:22,borderRadius:'50%',background:`${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}33`,border:`1px solid ${['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}44`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD'][si]}}>
+                            S{si+1}
+                          </div>
+                        ))}
+                        <div style={{width:22,height:22,borderRadius:'50%',background:'rgba(255,45,120,0.1)',border:'1px solid rgba(255,45,120,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:7,color:'#ff2d78'}}>BN</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{borderTop:'1px solid #111',paddingTop:12}}>
+                  <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>INVITE CODE</div>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    <code style={{fontSize:12,color:'#ff2d78',letterSpacing:3,background:'rgba(255,45,120,0.08)',padding:'4px 10px',borderRadius:4}}>{g.invite_code}</code>
+                    <button style={{background:'transparent',border:'1px solid #222',color:'#444',padding:'4px 10px',fontSize:9,cursor:'pointer',fontFamily:'monospace'}} onClick={()=>{navigator.clipboard.writeText(g.invite_code);setGroupMsg('Invite code copied!')}}>COPY</button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
