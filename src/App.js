@@ -1598,6 +1598,8 @@ function FanDashboard({ session, onSignOut }) {
   const [pointsFeed, setPointsFeed] = useState([])
   const [voteCounts, setVoteCounts] = useState({})
   const [playoffBracket, setPlayoffBracket] = useState([])
+  const [gamesPage, setGamesPage] = useState(0)
+  const [gamesTotal, setGamesTotal] = useState(0)
   const [profileStats, setProfileStats] = useState(null)
   const [prizePool, setPrizePool] = useState(null)
   const [groups, setGroups] = useState([])
@@ -1632,7 +1634,14 @@ function FanDashboard({ session, onSignOut }) {
         const { data: picks } = await supabase.from('draft_picks').select('*, artists(*)').eq('draft_id', draftData.id)
         setDraftPicks(picks || [])
       }
-      const { data: gamesData } = await supabase.from('games').select('*, home:home_artist_id(name,points,tier), away:away_artist_id(name,points,tier)').eq('season_id', seasonData.id).order('scheduled_at', { ascending: false }).limit(20)
+      const { data: gamesData, count: gamesCount } = await supabase
+        .from('games')
+        .select('*, home:home_artist_id(name,points,tier), away:away_artist_id(name,points,tier)', { count: 'exact' })
+        .eq('season_id', seasonData.id)
+        .order('scheduled_at', { ascending: false })
+        .range(0, 4)
+      setGames(gamesData || [])
+      setGamesTotal(gamesCount || 0)
       setGames(gamesData || [])
       const { data: statsData } = await supabase.from('artist_season_stats').select('*, artists(name,tier,salary)').eq('season_id', seasonData.id).order('wins', { ascending: false }).order('losses', { ascending: true })
       setStandings(statsData || [])
@@ -1642,6 +1651,21 @@ function FanDashboard({ session, onSignOut }) {
       setPlayoffBracket(bracket || [])
     }
     setLoading(false)
+  }
+
+  async function loadGamesPage(page) {
+    if (!season) return
+    const from = page * 5
+    const to = from + 4
+    const { data, count } = await supabase
+      .from('games')
+      .select('*, home:home_artist_id(name,points,tier), away:away_artist_id(name,points,tier)', { count: 'exact' })
+      .eq('season_id', season.id)
+      .order('scheduled_at', { ascending: false })
+      .range(from, to)
+    setGames(data || [])
+    setGamesTotal(count || 0)
+    setGamesPage(page)
   }
 
   async function loadProfileStats() {
@@ -2139,6 +2163,11 @@ function FanDashboard({ session, onSignOut }) {
                 {g.status==='live'&&<button style={{background:'rgba(255,45,120,0.1)',border:'1px solid #ff2d78',color:'#ff2d78',padding:'10px',width:'100%',marginTop:12,fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={(e)=>{e.stopPropagation();openGame(g)}}>ENTER ARENA →</button>}
               </div>
             ))}
+            <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
+                <button style={{...T.btn,padding:'6px 14px',fontSize:9,opacity:gamesPage===0?0.3:1}} disabled={gamesPage===0} onClick={()=>loadGamesPage(gamesPage-1)}>← PREV</button>
+                <span style={{fontSize:10,color:'#444'}}>{gamesPage+1} of {Math.max(1,Math.ceil(gamesTotal/5))}</span>
+                <button style={{...T.btn,padding:'6px 14px',fontSize:9,opacity:(gamesPage+1)*5>=gamesTotal?0.3:1}} disabled={(gamesPage+1)*5>=gamesTotal} onClick={()=>loadGamesPage(gamesPage+1)}>NEXT →</button>
+              </div>
           </div>
         )}
 
