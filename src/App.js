@@ -332,11 +332,13 @@ function AdminDashboard({ session, onSignOut }) {
     const home = document.getElementById('ghome').value
     const away = document.getElementById('gaway').value
     const time = document.getElementById('gtime').value
+    const homeVideo = document.getElementById('ghomevideo')?.value || null
+    const awayVideo = document.getElementById('gawayvideo')?.value || null
     if (!activeSeason) { alert('Create a season first'); return }
     if (home === away) { alert('Home and away must be different artists'); return }
-    const { error } = await supabase.from('games').insert({ season_id: activeSeason.id, home_artist_id: home, away_artist_id: away, scheduled_at: time, status:'upcoming' })
+    const { error } = await supabase.from('games').insert({ season_id: activeSeason.id, home_artist_id: home, away_artist_id: away, scheduled_at: time, status:'upcoming', home_video_url: homeVideo, away_video_url: awayVideo })
     if (error) { alert('Error: ' + error.message); return }
-    await loadLeagueGames()
+    await loadLeagueGames(gamesPage, gamesFilter)
     alert('Game scheduled!')
   }
 
@@ -458,13 +460,20 @@ function AdminDashboard({ session, onSignOut }) {
       await supabase.from('game_quarters').update({ status: 'finished' }).eq('id', liveQ.id)
     }
     if (nextQ) {
-      await supabase.from('game_quarters').update({ status: 'live' }).eq('id', nextQ.id)
+      const now = new Date().toISOString()
+      const end = new Date(Date.now() + 12*60*1000).toISOString()
+      await supabase.from('game_quarters').update({ 
+        status: 'live', 
+        starts_at: now,
+        ends_at: end
+      }).eq('id', nextQ.id)
       alert(`Q${nextQ.quarter_number} is now live!`)
     } else {
       await endGame(gameId, quarters)
     }
     loadLeagueGames(gamesPage, gamesFilter)
   }
+  
 
   async function endGame(gameId, quarters) {
     const homeTotal = quarters.reduce((s,q) => s + (q.home_points||0), 0)
@@ -782,6 +791,14 @@ function AdminDashboard({ session, onSignOut }) {
                 <input type="datetime-local" id="gtime" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace'}} />
               </div>
             </div>
+            <div>
+                <div style={T.label}>HOME ARTIST VIDEO URL (YouTube or MP4)</div>
+                <input type="text" id="ghomevideo" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:8}} placeholder="https://youtube.com/watch?v=..." />
+              </div>
+              <div>
+                <div style={T.label}>AWAY ARTIST VIDEO URL (YouTube or MP4)</div>
+                <input type="text" id="gawayvideo" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:8}} placeholder="https://youtube.com/watch?v=..." />
+              </div>
             <button style={T.submitBtn} onClick={scheduleGame}>SCHEDULE GAME →</button>
             {true && (
               <div style={{marginTop:24}}>
@@ -1570,6 +1587,9 @@ function FanDashboard({ session, onSignOut }) {
   const [loading, setLoading] = useState(true)
   const [votes, setVotes] = useState({})
   const [activeGame, setActiveGame] = useState(null)
+  const [quarterTimeLeft, setQuarterTimeLeft] = useState(12 * 60)
+  const [quarterBuzzing, setQuarterBuzzing] = useState(false)
+  const pollRef = React.useRef(null)
   const [quarters, setQuarters] = useState([])
   const [chatMessages, setChatMessages] = useState([])
   const [chatInput, setChatInput] = useState('')
@@ -1729,9 +1749,24 @@ function FanDashboard({ session, onSignOut }) {
   }
 
   async function openGame(game) {
+    setActiveGame(null)
+    setQuarters([])
+    setVoteCounts({})
+    setChatMessages([])
+    setPointsFeed([])
+    setVotes({})
+    setQuarterBuzzing(false)
     setActiveGame(game)
     const { data: qs } = await supabase.from('game_quarters').select('*').eq('game_id', game.id).order('quarter_number')
     setQuarters(qs || [])
+    const liveQ = (qs||[]).find(q=>q.status==='live')
+    if (liveQ?.starts_at) {
+      const elapsed = Math.floor((Date.now() - new Date(liveQ.starts_at).getTime()) / 1000)
+      if (elapsed >= 12 * 60) setQuarterBuzzing(true)
+      else setQuarterBuzzing(false)
+    } else {
+      setQuarterBuzzing(false)
+    }
     const { data: chat } = await supabase.from('game_chat').select('*, fans(username)').eq('game_id', game.id).order('created_at', { ascending: false }).limit(50)
     setChatMessages(chat || [])
     loadVoteCounts(game.id)
@@ -1742,6 +1777,12 @@ function FanDashboard({ session, onSignOut }) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fan_votes', filter: `game_id=eq.${game.id}` }, () => {
         loadVoteCounts(game.id)
       })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'game_quarters' }, async() => {
+        console.log('quarter updated — resetting buzzer')
+        const { data: qs } = await supabase.from('game_quarters').select('*').eq('game_id', game.id).order('quarter_number')
+        setQuarters(qs || [])
+        setQuarterBuzzing(false)
+      })
       .subscribe()
     const { data: existingVotes } = await supabase.from('fan_votes').select('quarter_id, voted_for').eq('fan_id', fan.id).eq('game_id', game.id)
     if (existingVotes) {
@@ -1749,10 +1790,29 @@ function FanDashboard({ session, onSignOut }) {
       existingVotes.forEach(v => { voteMap[v.quarter_id] = v.voted_for })
       setVotes(voteMap)
     }
+    if (pollRef.current) clearInterval(pollRef.current)
+    const pollInterval = setInterval(async() => {
+      const { data: qs } = await supabase.from('game_quarters').select('*').eq('game_id', game.id).order('quarter_number')
+      if (qs) {
+        const currentLive = qs.find(q=>q.status==='live')
+        setQuarters(prev => {
+          const prevLiveId = prev.find(q=>q.status==='live')?.id
+          if (prevLiveId !== currentLive?.id) {
+            if (currentLive) setQuarterBuzzing(false)
+            return qs
+          }
+          return prev
+        })
+      }
+    }, 5000)
+    pollRef.current = pollInterval
   }
+
+
 
   async function sendChat() {
     if (!chatInput.trim() || !fan || !activeGame) return
+    if (quarterBuzzing) { setChatInput(''); return }
     const msg = chatInput.trim()
     if (msg.length < 5) { setChatInput(''); return }
     const activeQuarter = quarters.find(q=>q.status==='live')
@@ -2085,7 +2145,7 @@ function FanDashboard({ session, onSignOut }) {
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 20px',borderBottom:'1px solid #111'}}>
               <button style={{background:'transparent',border:'none',color:'#444',cursor:'pointer',fontFamily:'monospace',fontSize:11,letterSpacing:2}} onClick={()=>setActiveGame(null)}>← BACK</button>
               <div style={{fontSize:10,color:'#ff2d78',letterSpacing:3}}>🔴 LIVE</div>
-              <div style={{fontSize:10,color:'#333',letterSpacing:2}}>48 MINS</div>
+              <QuarterTimer quarters={quarters} onQuarterEnd={()=>setQuarterBuzzing(true)} onTick={(t)=>{setQuarterTimeLeft(t);if(t>0)setQuarterBuzzing(false)}} />
             </div>
 
             {/* Arena */}
@@ -2094,6 +2154,7 @@ function FanDashboard({ session, onSignOut }) {
               {/* Spotlight effect */}
               <div style={{position:'absolute',top:0,left:'20%',width:'30%',height:'100%',background:'radial-gradient(ellipse,rgba(255,45,120,0.06) 0%,transparent 70%)',pointerEvents:'none'}} />
               <div style={{position:'absolute',top:0,right:'20%',width:'30%',height:'100%',background:'radial-gradient(ellipse,rgba(180,255,60,0.06) 0%,transparent 70%)',pointerEvents:'none'}} />
+
 
               {/* Artists */}
               <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:16}}>
@@ -2143,6 +2204,34 @@ function FanDashboard({ session, onSignOut }) {
                 </div>
               </div>
 
+              {/* Video players */}
+              {(activeGame.home_video_url || activeGame.away_video_url) && (
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
+                  <div style={{position:'relative',borderRadius:6,overflow:'hidden',background:'#000',aspectRatio:'16/9'}}>
+                    {activeGame.home_video_url ? (
+                      <iframe src={getEmbedUrl(activeGame.home_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                    ) : (
+                      <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No video</div>
+                    )}
+                    <div style={{position:'absolute',bottom:8,left:8,background:'rgba(0,0,0,0.75)',padding:'4px 10px',borderRadius:4}}>
+                      <div style={{fontSize:11,color:'#fff',fontWeight:700}}>{activeGame.home?.name}</div>
+                      <div style={{fontSize:9,color:'#ff2d78'}}>{activeGame.home?.tier?.toUpperCase()}</div>
+                    </div>
+                  </div>
+                  <div style={{position:'relative',borderRadius:6,overflow:'hidden',background:'#000',aspectRatio:'16/9'}}>
+                    {activeGame.away_video_url ? (
+                      <iframe src={getEmbedUrl(activeGame.away_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                    ) : (
+                      <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No video</div>
+                    )}
+                    <div style={{position:'absolute',bottom:8,right:8,background:'rgba(0,0,0,0.75)',padding:'4px 10px',borderRadius:4}}>
+                      <div style={{fontSize:11,color:'#fff',fontWeight:700}}>{activeGame.away?.name}</div>
+                      <div style={{fontSize:9,color:'#b4ff3c'}}>{activeGame.away?.tier?.toUpperCase()}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Vote buttons */}
               <div style={{marginBottom:16}}>
                 <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10,textAlign:'center'}}>VOTE FOR YOUR ARTIST — ACTIVE QUARTER</div>
@@ -2150,16 +2239,16 @@ function FanDashboard({ session, onSignOut }) {
                   <div key={q.id} style={{display:'flex',gap:8,marginBottom:8}}>
                     <button
                       style={{flex:1,padding:'14px 8px',background:votes[q.id]===activeGame.home_artist_id?'rgba(255,45,120,0.2)':'rgba(255,45,120,0.05)',border:`1px solid ${votes[q.id]===activeGame.home_artist_id?'#ff2d78':'rgba(255,45,120,0.2)'}`,color:'#ff2d78',fontFamily:'monospace',fontSize:11,cursor:'pointer',letterSpacing:1,borderRadius:4}}
-                      onClick={()=>!votes[q.id]&&castVote(q.id,activeGame.id,activeGame.home_artist_id,activeGame.home?.name)}
-                      disabled={!!votes[q.id]}
+                    onClick={()=>!votes[q.id]&&!quarterBuzzing&&castVote(q.id,activeGame.id,activeGame.home_artist_id,activeGame.home?.name)}
+                      disabled={!!votes[q.id]||quarterBuzzing}
                     >
                       {votes[q.id]===activeGame.home_artist_id?'✓ BACKED':'BACK THIS TEAM'}<br/>
                       <span style={{fontSize:9,opacity:0.6}}>{activeGame.home?.name}</span>
                     </button>
                     <button
                       style={{flex:1,padding:'14px 8px',background:votes[q.id]===activeGame.away_artist_id?'rgba(180,255,60,0.2)':'rgba(180,255,60,0.05)',border:`1px solid ${votes[q.id]===activeGame.away_artist_id?'#b4ff3c':'rgba(180,255,60,0.2)'}`,color:'#b4ff3c',fontFamily:'monospace',fontSize:11,cursor:'pointer',letterSpacing:1,borderRadius:4}}
-                      onClick={()=>!votes[q.id]&&castVote(q.id,activeGame.id,activeGame.away_artist_id,activeGame.away?.name)}
-                      disabled={!!votes[q.id]}
+                      onClick={()=>!votes[q.id]&&!quarterBuzzing&&castVote(q.id,activeGame.id,activeGame.away_artist_id,activeGame.away?.name)}
+                      disabled={!!votes[q.id]||quarterBuzzing}
                     >
                       {votes[q.id]===activeGame.away_artist_id?'✓ BACKED':'BACK THIS TEAM'}<br/>
                       <span style={{fontSize:9,opacity:0.6}}>{activeGame.away?.name}</span>
@@ -2615,6 +2704,74 @@ const L = {
 
 const PR = {
   btn:{flex:1,background:'rgba(255,255,255,0.02)',border:'1px solid',borderRadius:6,padding:'24px 16px',cursor:'pointer',fontFamily:'monospace'},
+}
+
+function getEmbedUrl(url) {
+  if (!url) return ''
+  if (url.includes('youtube.com/watch')) {
+    const id = new URL(url).searchParams.get('v')
+    return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`
+  }
+  if (url.includes('youtu.be/')) {
+    const id = url.split('youtu.be/')[1].split('?')[0]
+    return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`
+  }
+  return url
+}
+
+function QuarterTimer({ quarters, onQuarterEnd, onTick }) {
+  const [timeLeft, setTimeLeft] = useState(12 * 60)
+  const [buzzing, setBuzzing] = useState(false)
+  const liveQ = quarters.find(q => q.status === 'live')
+
+  useEffect(() => {
+    setBuzzing(false)
+  }, [liveQ?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setBuzzing(false)
+    setTimeLeft(12 * 60)
+    if (!liveQ) return
+    const quarterDuration = 12 * 60
+    const startTime = liveQ.starts_at ? new Date(liveQ.starts_at).getTime() : Date.now()
+    const elapsed = Math.floor((Date.now() - startTime) / 1000)
+    const remaining = Math.max(0, quarterDuration - elapsed)
+    setTimeLeft(remaining)
+    setBuzzing(remaining === 0)
+    if (remaining === 0) return
+    const iv = setInterval(() => {
+      setTimeLeft(t => {
+        const next = t <= 1 ? 0 : t - 1
+        if (onTick) onTick(next)
+        if (next === 0) {
+          clearInterval(iv)
+          setBuzzing(true)
+          if (onQuarterEnd) onQuarterEnd()
+        }
+        return next
+      })
+    }, 1000)
+    return () => clearInterval(iv)
+  }, [liveQ?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mins = Math.floor(timeLeft / 60)
+  const secs = timeLeft % 60
+  const pct = (timeLeft / (12 * 60)) * 100
+
+  if (!liveQ) return (
+    <div style={{fontSize:10,color:'#333',letterSpacing:2,fontFamily:'monospace'}}>BREAK</div>
+  )
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontFamily:'monospace'}}>
+      <div style={{fontSize:buzzing?16:13,color:buzzing?'#ff2d78':timeLeft<60?'#ff9500':timeLeft<180?'#ffd60a':'#fff',fontWeight:700,letterSpacing:2}}>
+        {buzzing ? '🔔 BUZZER!' : `Q${liveQ.quarter_number} ${mins}:${secs.toString().padStart(2,'0')}`}
+      </div>
+      <div style={{width:80,height:2,background:'#111',borderRadius:1}}>
+        <div style={{width:`${pct}%`,height:2,background:timeLeft<60?'#ff2d78':timeLeft<180?'#ffd60a':'#b4ff3c',borderRadius:1,transition:'width 1s'}} />
+      </div>
+    </div>
+  )
 }
 
 function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
