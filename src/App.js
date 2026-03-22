@@ -526,6 +526,8 @@ function AdminDashboard({ session, onSignOut }) {
       } else {
         await supabase.from('fan_season_points').insert({ fan_id: fanId, season_id: seasonId, points: pts })
       }
+      const { data: fanRow } = await supabase.from('fans').select('total_points').eq('id', fanId).single()
+      await supabase.from('fans').update({ total_points: (fanRow?.total_points||0) + pts }).eq('id', fanId)
     }
     alert('Fan points awarded!')
   }
@@ -1664,7 +1666,7 @@ function FanDashboard({ session, onSignOut }) {
     const now = new Date()
     const { data: pool } = await supabase.from('prize_pools').select('*').eq('status','active').eq('month', now.getMonth()+1).eq('year', now.getFullYear()).single()
     setPrizePool(pool || null)
-    const { data: fans } = await supabase.from('fans').select('id, username, coins, shootout_points').order('shootout_points', { ascending: false }).limit(10)
+    const { data: fans } = await supabase.from('fans').select('id, username, coins, total_points, shootout_points').order('total_points', { ascending: false }).limit(10)
     setPrizeLeaderboard(fans || [])
     const { data: past } = await supabase.from('prize_winners').select('*, fans(username)').order('created_at', { ascending: false }).limit(12)
     setPastWinners(past || [])
@@ -1731,7 +1733,8 @@ function FanDashboard({ session, onSignOut }) {
         if(qErr) console.log('quarter update error:', qErr)
         setQuarters(qs => qs.map(q => q.id===quarterId ? {...q, [field]: current+10} : q))
       }
-      await supabase.from('fans').update({ coins: (fan.coins||0) + 10 }).eq('id', fan.id)
+      await supabase.from('fans').update({ total_points: (fan.total_points||0) + 10 }).eq('id', fan.id)
+      setFan(f=>({...f, total_points:(f.total_points||0)+10}))
       loadVoteCounts(gameId)
     }
   }
@@ -1842,6 +1845,8 @@ function FanDashboard({ session, onSignOut }) {
     if (earnPoints) {
       fan._lastComment = now
       fan._lastMessage = msg
+      await supabase.from('fans').update({ total_points: (fan.total_points||0) + 0.25 }).eq('id', fan.id)
+      setFan(f=>({...f, total_points:(f.total_points||0)+0.25}))
       setPointsFeed(f => [{
         id: Date.now(),
         fan: fan.username,
@@ -2405,7 +2410,7 @@ function FanDashboard({ session, onSignOut }) {
 
         {/* ── SHOOTOUT ── */}
        {tab==='shootout' && (
-          <AlbumShootout fan={fan} supabase={supabase} onCoinsUpdate={(newCoins)=>setFan(f=>({...f,coins:newCoins}))} />
+          <AlbumShootout fan={fan} supabase={supabase} onCoinsUpdate={(newCoins)=>setFan(f=>({...f,coins:newCoins}))} onPointsUpdate={(pts)=>setFan(f=>({...f,total_points:(f.total_points||0)+pts}))} />
         )}
 
         {/* ── PRIZES ── */}
@@ -2440,7 +2445,7 @@ function FanDashboard({ session, onSignOut }) {
                   <div style={{fontSize:20,color:i<4?['#ffd60a','#b4ff3c','#ff9500','#ff2d78'][i]:'#333',fontWeight:700,minWidth:28}}>#{i+1}</div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:12,color:'#fff'}}>{f.username}</div>
-                    <div style={{fontSize:9,color:'#444',marginTop:2}}>{f.shootout_points||0} shootout pts</div>
+                    <div style={{fontSize:9,color:'#444',marginTop:2}}>{f.total_points||0} total pts</div>
                   </div>
                   {i < 4 && <div style={{fontSize:11,color:'#ffd60a'}}>${((prizePool?.total_amount||0)*[0.5,0.3,0.15,0.05][i]).toFixed(2)}</div>}
                 </div>
@@ -2626,6 +2631,10 @@ function FanDashboard({ session, onSignOut }) {
               </div>
             </div>
 
+            <div style={{...T.card,textAlign:'center',padding:'16px',marginBottom:16,borderColor:'rgba(255,215,0,0.2)',background:'rgba(255,215,0,0.03)'}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:3,marginBottom:6}}>TOTAL POINTS</div>
+              <div style={{fontSize:36,color:'#ffd60a',fontWeight:700}}>{(fan?.total_points||0).toFixed(0)}</div>
+            </div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
               <div style={{...T.card,textAlign:'center',padding:'14px 8px'}}>
                 <div style={{fontSize:22,color:'#EF9F27',fontWeight:500}}>{profileStats?.fireShots||0}</div>
@@ -2774,7 +2783,7 @@ function QuarterTimer({ quarters, onQuarterEnd, onTick }) {
   )
 }
 
-function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
+function AlbumShootout({ fan, supabase, onCoinsUpdate, onPointsUpdate }) {
   const [catalog, setCatalog] = useState([])
   const [coins, setCoins] = useState(fan?.coins || 0)
   const [search, setSearch] = useState('')
@@ -2851,10 +2860,13 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate }) {
     const newCoins = coins - cost
     setCoins(newCoins)
     if (onCoinsUpdate) onCoinsUpdate(newCoins)
+    const { data: freshFan } = await supabase.from('fans').select('total_points, shootout_points').eq('id', fan.id).single()
     await supabase.from('fans').update({ 
       coins: newCoins,
-      shootout_points: (fan.shootout_points||0) + 0.25
+      shootout_points: (freshFan?.shootout_points||0) + 0.25,
+      total_points: (freshFan?.total_points||0) + earned
     }).eq('id', fan.id)
+    if (onPointsUpdate) onPointsUpdate(earned)
     setSentiment(s=>({ ...s, [item.id]:{ ...s[item.id], [net]:(s[item.id]?.[net]||0)+1 } }))
     setWeekSentiment(s=>({ ...s, [item.id]:{ ...s[item.id], [net]:(s[item.id]?.[net]||0)+1 } }))
     const idx = catalog.findIndex(c=>c.id===item.id)
