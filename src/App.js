@@ -432,9 +432,9 @@ function AdminDashboard({ session, onSignOut }) {
   async function goLive(gameId) {
     await supabase.from('games').update({status:'live'}).eq('id', gameId)
     const now = new Date()
-    for (let q=1; q<=4; q++) {
-      const start = new Date(now.getTime()+(q-1)*12*60*1000)
-      const end = new Date(now.getTime()+q*12*60*1000)
+    for (let q=1; q<=3; q++) {
+      const start = new Date(now.getTime()+(q-1)*16*60*1000)
+      const end = new Date(now.getTime()+q*16*60*1000)
       const {error} = await supabase.from('game_quarters').insert({
         game_id: gameId,
         quarter_number: q,
@@ -461,7 +461,7 @@ function AdminDashboard({ session, onSignOut }) {
     }
     if (nextQ) {
       const now = new Date().toISOString()
-      const end = new Date(Date.now() + 12*60*1000).toISOString()
+      const end = new Date(Date.now() + 16*60*1000).toISOString()
       await supabase.from('game_quarters').update({ 
         status: 'live', 
         starts_at: now,
@@ -1587,7 +1587,7 @@ function FanDashboard({ session, onSignOut }) {
   const [loading, setLoading] = useState(true)
   const [votes, setVotes] = useState({})
   const [activeGame, setActiveGame] = useState(null)
-  const [quarterTimeLeft, setQuarterTimeLeft] = useState(12 * 60)
+  const [quarterTimeLeft, setQuarterTimeLeft] = useState(16 * 60)
   const [quarterBuzzing, setQuarterBuzzing] = useState(false)
   const pollRef = React.useRef(null)
   const [quarters, setQuarters] = useState([])
@@ -1762,7 +1762,7 @@ function FanDashboard({ session, onSignOut }) {
     const liveQ = (qs||[]).find(q=>q.status==='live')
     if (liveQ?.starts_at) {
       const elapsed = Math.floor((Date.now() - new Date(liveQ.starts_at).getTime()) / 1000)
-      if (elapsed >= 12 * 60) setQuarterBuzzing(true)
+      if (elapsed >= 16 * 60) setQuarterBuzzing(true)
       else setQuarterBuzzing(false)
     } else {
       setQuarterBuzzing(false)
@@ -2171,7 +2171,7 @@ function FanDashboard({ session, onSignOut }) {
                 {/* Scoreboard */}
                 <div style={{textAlign:'center',padding:'0 8px',minWidth:120}}>
                   <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>SCOREBOARD</div>
-                  {[1,2,3,4].map(q=>{
+                 {[1,2,3].map(q=>{
                     const quarter = quarters.find(x=>x.quarter_number===q)
                     const homePoints = quarter ? Math.round((quarter.home_points||0)*100)/100 : 0
                     const awayPoints = quarter ? Math.round((quarter.away_points||0)*100)/100 : 0
@@ -2720,7 +2720,7 @@ function getEmbedUrl(url) {
 }
 
 function QuarterTimer({ quarters, onQuarterEnd, onTick }) {
-  const [timeLeft, setTimeLeft] = useState(12 * 60)
+  const [timeLeft, setTimeLeft] = useState(16 * 60)
   const [buzzing, setBuzzing] = useState(false)
   const liveQ = quarters.find(q => q.status === 'live')
 
@@ -2730,9 +2730,9 @@ function QuarterTimer({ quarters, onQuarterEnd, onTick }) {
 
   useEffect(() => {
     setBuzzing(false)
-    setTimeLeft(12 * 60)
+    setTimeLeft(16 * 60)
     if (!liveQ) return
-    const quarterDuration = 12 * 60
+    const quarterDuration = 16 * 60
     const startTime = liveQ.starts_at ? new Date(liveQ.starts_at).getTime() : Date.now()
     const elapsed = Math.floor((Date.now() - startTime) / 1000)
     const remaining = Math.max(0, quarterDuration - elapsed)
@@ -2756,7 +2756,7 @@ function QuarterTimer({ quarters, onQuarterEnd, onTick }) {
 
   const mins = Math.floor(timeLeft / 60)
   const secs = timeLeft % 60
-  const pct = (timeLeft / (12 * 60)) * 100
+  const pct = (timeLeft / (16 * 60)) * 100
 
   if (!liveQ) return (
     <div style={{fontSize:10,color:'#333',letterSpacing:2,fontFamily:'monospace'}}>BREAK</div>
