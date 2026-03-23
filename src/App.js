@@ -248,6 +248,9 @@ function AdminDashboard({ session, onSignOut }) {
   const [catalog, setCatalog] = useState([])
   const [catalogForm, setCatalogForm] = useState({ title:'', artist_name:'', type:'song', cover_url:'', coin_cost:1 })
   const [catalogMsg, setCatalogMsg] = useState('')
+  const [warRoomsList, setWarRoomsList] = useState([])
+  const [warRoomForm, setWarRoomForm] = useState({ artist_id:'', name:'', description:'', head_coach_email:'' })
+  const [warRoomMsg, setWarRoomMsg] = useState('')
   const [gamesPage, setGamesPage] = useState(0)
   const [gamesFilter, setGamesFilter] = useState({ artist:'', date:'' })
   const [gamesTotal, setGamesTotal] = useState(0)
@@ -261,6 +264,7 @@ function AdminDashboard({ session, onSignOut }) {
     if (tab === 'fans') loadFans()
     if (tab === 'league') { loadArtists(); loadSeasons(); loadLeagueGames(0, gamesFilter); loadPlayoffs(); }
     if (tab === 'shootout') loadCatalog() 
+    if (tab === 'warrooms') { loadArtists(); loadWarRoomsList(); }
   }, [tab])
 
   async function loadQueue() {
@@ -383,6 +387,14 @@ function AdminDashboard({ session, onSignOut }) {
   async function loadCatalog() {
     const { data } = await supabase.from('shootout_catalog').select('*').order('created_at', { ascending: false })
     setCatalog(data || [])
+  }
+
+  async function loadWarRoomsList() {
+    const { data } = await supabase
+      .from('war_rooms')
+      .select('*, artists(name), fans(username)')
+      .order('created_at', { ascending: false })
+    setWarRoomsList(data || [])
   }
 
   async function recordPlayoffWin(seriesId, artistId) {
@@ -646,7 +658,7 @@ function AdminDashboard({ session, onSignOut }) {
       </div>
 
       <div style={T.nav}>
-        {[['queue','IMAGE QUEUE'],['create','CREATE ARTIST'],['artists','ARTISTS'],['fans','FANS'],['league','LEAGUE MANAGER'],['shootout','SHOOTOUT CATALOG']].map(([id,label])=>(
+        {[['queue','IMAGE QUEUE'],['create','CREATE ARTIST'],['artists','ARTISTS'],['fans','FANS'],['league','LEAGUE MANAGER'],['shootout','SHOOTOUT CATALOG'],['warrooms','WAR ROOMS']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -921,6 +933,59 @@ function AdminDashboard({ session, onSignOut }) {
                 }}>REMOVE</button>
               </div>
             ))}
+            {tab==='warrooms' && (
+          <div>
+            <div style={{fontSize:10,color:'#333',marginBottom:20,letterSpacing:2}}>WAR ROOM MANAGER</div>
+
+            <div style={{maxWidth:480,marginBottom:32}}>
+              <div style={T.label}>ARTIST</div>
+              <select style={{...T.input,marginBottom:12}} value={warRoomForm.artist_id} onChange={e=>setWarRoomForm({...warRoomForm,artist_id:e.target.value})}>
+                <option value=''>Select artist...</option>
+                {artists.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              <div style={T.label}>WAR ROOM NAME</div>
+              <input style={T.input} value={warRoomForm.name} onChange={e=>setWarRoomForm({...warRoomForm,name:e.target.value})} placeholder="e.g. Nova Lex War Room" />
+              <div style={T.label}>DESCRIPTION</div>
+              <input style={T.input} value={warRoomForm.description} onChange={e=>setWarRoomForm({...warRoomForm,description:e.target.value})} placeholder="War room description..." />
+              <div style={T.label}>HEAD COACH (fan username)</div>
+              <input style={T.input} value={warRoomForm.head_coach_email} onChange={e=>setWarRoomForm({...warRoomForm,head_coach_email:e.target.value})} placeholder="Fan username..." />
+              {warRoomMsg && <div style={{fontSize:11,color:warRoomMsg.startsWith('Error')?'#ff2d78':'#b4ff3c',marginBottom:12}}>{warRoomMsg}</div>}
+              <button style={T.submitBtn} onClick={async()=>{
+                if (!warRoomForm.artist_id||!warRoomForm.name) { setWarRoomMsg('Artist and name required'); return }
+                let headCoachId = null
+                if (warRoomForm.head_coach_email) {
+                  const { data: coachFan } = await supabase.from('fans').select('id').ilike('username', warRoomForm.head_coach_email).single()
+                  headCoachId = coachFan?.id || null
+                }
+                const { error } = await supabase.from('war_rooms').insert({
+                  artist_id: warRoomForm.artist_id,
+                  name: warRoomForm.name,
+                  description: warRoomForm.description,
+                  head_coach_id: headCoachId,
+                  active: true
+                })
+                if (error) { setWarRoomMsg('Error: '+error.message); return }
+                setWarRoomMsg('War Room created!')
+                setWarRoomForm({ artist_id:'', name:'', description:'', head_coach_email:'' })
+                loadWarRoomsList()
+              }}>CREATE WAR ROOM →</button>
+            </div>
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>ALL WAR ROOMS — {warRoomsList.length}</div>
+            {warRoomsList.map(wr=>(
+              <div key={wr.id} style={{...T.row,marginBottom:8,flexWrap:'wrap',gap:8}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:'#fff'}}>{wr.name}</div>
+                  <div style={{fontSize:10,color:'#444'}}>{wr.artists?.name} · {wr.subscriber_count||0} subscribers · Coach: @{wr.fans?.username||'none'}</div>
+                </div>
+                <button style={{...T.reject,padding:'4px 10px',fontSize:9}} onClick={async()=>{
+                  await supabase.from('war_rooms').update({ active: false }).eq('id', wr.id)
+                  loadWarRoomsList()
+                }}>DEACTIVATE</button>
+              </div>
+            ))}
+          </div>
+        )}
           </div>
         )}
 
@@ -1600,6 +1665,8 @@ function FanDashboard({ session, onSignOut }) {
   const [playoffBracket, setPlayoffBracket] = useState([])
   const [gamesPage, setGamesPage] = useState(0)
   const [gamesTotal, setGamesTotal] = useState(0)
+  const [standingsPage, setStandingsPage] = useState(0)
+  const [standingsTotal, setStandingsTotal] = useState(0)
   const [profileStats, setProfileStats] = useState(null)
   const [prizePool, setPrizePool] = useState(null)
   const [groups, setGroups] = useState([])
@@ -1608,6 +1675,18 @@ function FanDashboard({ session, onSignOut }) {
   const [groupMsg, setGroupMsg] = useState('')
   const [prizeLeaderboard, setPrizeLeaderboard] = useState([])
   const [pastWinners, setPastWinners] = useState([])
+  const [prizePage, setPrizePage] = useState(0)
+  const [warRooms, setWarRooms] = useState([])
+  const [myWarRooms, setMyWarRooms] = useState([])
+  const [activeWarRoom, setActiveWarRoom] = useState(null)
+  const [warRoomPosts, setWarRoomPosts] = useState([])
+  const [warRoomPolls, setWarRoomPolls] = useState([])
+  const [warRoomMembers, setWarRoomMembers] = useState([])
+  const [warRoomMsg, setWarRoomMsg] = useState('')
+  const [warRoomInput, setWarRoomInput] = useState('')
+  const [pollForm, setPollForm] = useState({ question:'', options:['',''] })
+  const [showPollForm, setShowPollForm] = useState(false)
+  const [pinnedPost, setPinnedPost] = useState('')
 
   const SALARY_CAP = 100
   const COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
@@ -1617,6 +1696,7 @@ function FanDashboard({ session, onSignOut }) {
     if (tab === 'profile') loadProfileStats()
     if (tab === 'prizes') loadPrizes()
     if (tab === 'groups') loadGroups()
+    if (tab === 'warroom') loadWarRooms()  
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
@@ -1643,8 +1723,15 @@ function FanDashboard({ session, onSignOut }) {
       setGames(gamesData || [])
       setGamesTotal(gamesCount || 0)
       setGames(gamesData || [])
-      const { data: statsData } = await supabase.from('artist_season_stats').select('*, artists(name,tier,salary)').eq('season_id', seasonData.id).order('wins', { ascending: false }).order('losses', { ascending: true })
+      const { data: statsData, count: statsCount } = await supabase
+        .from('artist_season_stats')
+        .select('*, artists(name,tier,salary)', { count: 'exact' })
+        .eq('season_id', seasonData.id)
+        .order('wins', { ascending: false })
+        .order('losses', { ascending: true })
+        .range(0, 9)
       setStandings(statsData || [])
+      setStandingsTotal(statsCount || 0)
     }
     if (seasonData) {
       const { data: bracket } = await supabase.from('playoffs').select('*, artist1:artist1_id(name,tier), artist2:artist2_id(name,tier), winner:winner_id(name)').eq('season_id', seasonData.id).order('round').order('series_number')
@@ -1666,6 +1753,22 @@ function FanDashboard({ session, onSignOut }) {
     setGames(data || [])
     setGamesTotal(count || 0)
     setGamesPage(page)
+  }
+
+  async function loadStandingsPage(page) {
+    if (!season) return
+    const from = page * 10
+    const to = from + 9
+    const { data, count } = await supabase
+      .from('artist_season_stats')
+      .select('*, artists(name,tier,salary)', { count: 'exact' })
+      .eq('season_id', season.id)
+      .order('wins', { ascending: false })
+      .order('losses', { ascending: true })
+      .range(from, to)
+    setStandings(data || [])
+    setStandingsTotal(count || 0)
+    setStandingsPage(page)
   }
 
   async function loadProfileStats() {
@@ -1690,10 +1793,109 @@ function FanDashboard({ session, onSignOut }) {
     const now = new Date()
     const { data: pool } = await supabase.from('prize_pools').select('*').eq('status','active').eq('month', now.getMonth()+1).eq('year', now.getFullYear()).single()
     setPrizePool(pool || null)
-    const { data: fans } = await supabase.from('fans').select('id, username, coins, total_points, shootout_points').order('total_points', { ascending: false }).limit(10)
+    const { data: fans } = await supabase.from('fans').select('id, username, total_points').order('total_points', { ascending: false }).limit(100)
     setPrizeLeaderboard(fans || [])
     const { data: past } = await supabase.from('prize_winners').select('*, fans(username)').order('created_at', { ascending: false }).limit(12)
     setPastWinners(past || [])
+  }
+
+  async function loadWarRooms() {
+    const { data: all } = await supabase
+      .from('war_rooms')
+      .select('*, artists(name,tier,points), fans(username)')
+      .eq('active', true)
+      .order('subscriber_count', { ascending: false })
+    setWarRooms(all || [])
+    if (fan) {
+      const { data: mine } = await supabase
+        .from('war_room_members')
+        .select('*, war_rooms(*, artists(name,tier), fans(username))')
+        .eq('fan_id', fan.id)
+      setMyWarRooms(mine || [])
+    }
+  }
+
+  async function joinWarRoom(warRoomId) {
+    if (!fan) return
+    const { error } = await supabase.from('war_room_members').insert({ war_room_id: warRoomId, fan_id: fan.id, role: 'player' })
+    if (error) { setWarRoomMsg('Error: ' + error.message); return }
+    await supabase.from('war_rooms').update({ subscriber_count: supabase.rpc('increment', { row_id: warRoomId }) }).eq('id', warRoomId)
+    setWarRoomMsg('Joined War Room!')
+    loadWarRooms()
+  }
+
+  async function leaveWarRoom(warRoomId) {
+    await supabase.from('war_room_members').delete().eq('war_room_id', warRoomId).eq('fan_id', fan.id)
+    if (activeWarRoom?.id === warRoomId) setActiveWarRoom(null)
+    loadWarRooms()
+  }
+
+  async function openWarRoom(wr) {
+    setActiveWarRoom(wr)
+    const { data: posts } = await supabase
+      .from('war_room_posts')
+      .select('*, fans(username)')
+      .eq('war_room_id', wr.id)
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setWarRoomPosts(posts || [])
+    const { data: polls } = await supabase
+      .from('war_room_polls')
+      .select('*, fans(username)')
+      .eq('war_room_id', wr.id)
+      .eq('active', true)
+      .order('created_at', { ascending: false })
+    setWarRoomPolls(polls || [])
+    const { data: members } = await supabase
+      .from('war_room_members')
+      .select('*, fans(username)')
+      .eq('war_room_id', wr.id)
+    setWarRoomMembers(members || [])
+  }
+
+  async function sendWarRoomMessage(type='message') {
+    if (!warRoomInput.trim() || !activeWarRoom || !fan) return
+    const isCoach = activeWarRoom.head_coach_id === fan.id
+    await supabase.from('war_room_posts').insert({
+      war_room_id: activeWarRoom.id,
+      fan_id: fan.id,
+      content: warRoomInput.trim(),
+      type: isCoach && type === 'strategy' ? 'strategy' : 'message',
+      pinned: false
+    })
+    setWarRoomInput('')
+    openWarRoom(activeWarRoom)
+  }
+
+  async function pinPost(postId) {
+    await supabase.from('war_room_posts').update({ pinned: true }).eq('id', postId)
+    openWarRoom(activeWarRoom)
+  }
+
+  async function createPoll() {
+    if (!pollForm.question || pollForm.options.filter(o=>o.trim()).length < 2) { setWarRoomMsg('Need a question and at least 2 options'); return }
+    const opts = pollForm.options.filter(o=>o.trim()).reduce((acc,o)=>({ ...acc, [o]:0 }), {})
+    await supabase.from('war_room_polls').insert({
+      war_room_id: activeWarRoom.id,
+      fan_id: fan.id,
+      question: pollForm.question,
+      options: opts,
+      votes: {}
+    })
+    setPollForm({ question:'', options:['',''] })
+    setShowPollForm(false)
+    openWarRoom(activeWarRoom)
+  }
+
+  async function votePoll(pollId, option) {
+    if (!fan) return
+    const poll = warRoomPolls.find(p=>p.id===pollId)
+    if (!poll) return
+    if (poll.votes[fan.id]) { setWarRoomMsg('Already voted'); return }
+    const newVotes = { ...poll.votes, [fan.id]: option }
+    const newOptions = { ...poll.options, [option]: (poll.options[option]||0) + 1 }
+    await supabase.from('war_room_polls').update({ votes: newVotes, options: newOptions }).eq('id', pollId)
+    openWarRoom(activeWarRoom)
   }
 
   async function loadGroups() {
@@ -1965,7 +2167,7 @@ function FanDashboard({ session, onSignOut }) {
         </div>
       )}
       <div style={T.nav}>
-        {[['league','THE LEAGUE'],['roster','MY ROSTER'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['prizes','PRIZES'],['groups','GROUPS'],['profile','MY PROFILE']].map(([id,label])=>(
+        {[['league','THE LEAGUE'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['prizes','PRIZES'],['warroom','WAR ROOM'],['profile','MY PROFILE']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -2374,66 +2576,26 @@ function FanDashboard({ session, onSignOut }) {
                 </div>
               </div>
             ))}
+            <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
+              <button style={{...T.btn,padding:'6px 14px',fontSize:9,opacity:standingsPage===0?0.3:1}} disabled={standingsPage===0} onClick={()=>loadStandingsPage(standingsPage-1)}>← PREV</button>
+              <span style={{fontSize:10,color:'#444'}}>{standingsPage+1} of {Math.max(1,Math.ceil(standingsTotal/10))}</span>
+              <button style={{...T.btn,padding:'6px 14px',fontSize:9,opacity:(standingsPage+1)*10>=standingsTotal?0.3:1}} disabled={(standingsPage+1)*10>=standingsTotal} onClick={()=>loadStandingsPage(standingsPage+1)}>NEXT →</button>
+            </div>
           </div>
         )}
 
         {/* ── PLAYOFFS ── */}
         {tab==='playoffs' && (
-          <div>
-            <div style={T.sectionTitle}>PLAYOFF BRACKET</div>
-            {playoffBracket.length===0 && (
+          <div style={{overflowX:'auto'}}>
+            <div style={{fontSize:9,color:'#333',letterSpacing:3,marginBottom:16}}>PLAYOFF BRACKET</div>
+            {playoffBracket.length===0 ? (
               <div style={{...T.card,textAlign:'center',padding:40}}>
                 <div style={{fontSize:14,color:'#333',marginBottom:8}}>Playoffs not started</div>
                 <div style={{fontSize:11,color:'#222'}}>Top 16 artists advance after the regular season</div>
               </div>
+            ) : (
+              <PlayoffBracket bracket={playoffBracket} />
             )}
-            {[1,2,3,4].map(round=>{
-              const roundSeries = playoffBracket.filter(s=>s.round===round)
-              if (roundSeries.length===0) return null
-              const roundNames = {1:'FIRST ROUND',2:'SEMIFINALS',3:'CONFERENCE FINALS',4:'CHAMPIONSHIP'}
-              return (
-                <div key={round} style={{marginBottom:24}}>
-                  <div style={{fontSize:9,color:'#ff2d78',letterSpacing:3,marginBottom:12}}>{roundNames[round]||`ROUND ${round}`}</div>
-                  {roundSeries.map((s,i)=>(
-                    <div key={s.id} style={{...T.card,borderLeft:`3px solid ${s.status==='finished'?'#333':'#ff2d78'}`,marginBottom:10}}>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                        <span style={{...T.tag,background:s.status==='finished'?'rgba(255,255,255,0.03)':'rgba(255,45,120,0.1)',color:s.status==='finished'?'#444':'#ff2d78'}}>{s.status==='finished'?'FINISHED':'ACTIVE'}</span>
-                        <span style={{fontSize:9,color:'#333'}}>SERIES {i+1} · BEST OF 7</span>
-                      </div>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                        <div style={{flex:1}}>
-                         <div style={{fontSize:13,color:s.winner_id===s.artist1_id?'#ffd60a':'#fff',marginBottom:3}}>{s.artist1?.name} {s.winner_id===s.artist1_id&&'🏆'}</div>
-                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>
-                            {s.artist1?.tier?.toUpperCase()}
-                            {standings.findIndex(x=>x.artist_id===s.artist1_id)>=0 && ` · #${standings.findIndex(x=>x.artist_id===s.artist1_id)+1} SEED`}
-                          </div>
-                        </div>
-                        <div style={{textAlign:'center',padding:'0 12px'}}>
-                          <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                            <span style={{fontSize:24,color:'#ff2d78',fontWeight:700}}>{s.artist1_wins}</span>
-                            <span style={{fontSize:12,color:'#333'}}>—</span>
-                            <span style={{fontSize:24,color:'#b4ff3c',fontWeight:700}}>{s.artist2_wins}</span>
-                          </div>
-                          <div style={{fontSize:9,color:'#333',marginTop:4}}>WINS</div>
-                        </div>
-                        <div style={{flex:1,textAlign:'right'}}>
-                         <div style={{fontSize:13,color:s.winner_id===s.artist2_id?'#ffd60a':'#fff',marginBottom:3}}>{s.winner_id===s.artist2_id&&'🏆'} {s.artist2?.name}</div>
-                          <div style={{fontSize:9,color:'#444',letterSpacing:1}}>
-                            {s.artist2?.tier?.toUpperCase()}
-                            {standings.findIndex(x=>x.artist_id===s.artist2_id)>=0 && ` · #${standings.findIndex(x=>x.artist_id===s.artist2_id)+1} SEED`}
-                          </div>
-                        </div>
-                      </div>
-                      {s.winner && (
-                        <div style={{marginTop:12,textAlign:'center',fontSize:10,color:'#ffd60a',letterSpacing:2}}>
-                          🏆 {s.winner?.name} WINS THE SERIES
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )
-            })}
           </div>
         )}
 
@@ -2468,18 +2630,30 @@ function FanDashboard({ session, onSignOut }) {
             </div>
 
             <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>THIS MONTH — TOP FANS</div>
-            {prizeLeaderboard.map((f,i)=>(
-              <div key={f.id} style={{...T.card,marginBottom:8,borderLeft:`3px solid ${['#ffd60a','#b4ff3c','#ff9500','#ff2d78','#7F77DD','#378ADD','#1D9E75','#D85A30','#888','#555'][i]}`}}>
-                <div style={{display:'flex',gap:14,alignItems:'center'}}>
-                  <div style={{fontSize:20,color:i<4?['#ffd60a','#b4ff3c','#ff9500','#ff2d78'][i]:'#333',fontWeight:700,minWidth:28}}>#{i+1}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:12,color:'#fff'}}>{f.username}</div>
-                    <div style={{fontSize:9,color:'#444',marginTop:2}}>{f.total_points||0} total pts</div>
+            {prizeLeaderboard.slice(prizePage===0?0:10+(prizePage-1)*10, prizePage===0?10:10+prizePage*10).map((f,i)=>{
+              const actualIndex = prizePage===0 ? i : 10+(prizePage-1)*10+i
+              const RANK_COLORS = ['#ffd60a','#b4ff3c','#ff9500','#ff2d78']
+              const rankColor = actualIndex < 4 ? RANK_COLORS[actualIndex] : '#333'
+              return (
+                <div key={f.id} style={{...T.card,marginBottom:8,borderLeft:`3px solid ${rankColor}`}}>
+                  <div style={{display:'flex',gap:14,alignItems:'center'}}>
+                    <div style={{fontSize:20,color:rankColor,fontWeight:700,minWidth:28}}>#{actualIndex+1}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,color:'#fff'}}>{f.username}</div>
+                      <div style={{fontSize:9,color:'#444',marginTop:2}}>{f.total_points||0} total pts</div>
+                    </div>
+                    {actualIndex < 4 && <div style={{fontSize:11,color:'#ffd60a'}}>${((prizePool?.total_amount||0)*[0.5,0.3,0.15,0.05][actualIndex]).toFixed(2)}</div>}
                   </div>
-                  {i < 4 && <div style={{fontSize:11,color:'#ffd60a'}}>${((prizePool?.total_amount||0)*[0.5,0.3,0.15,0.05][i]).toFixed(2)}</div>}
                 </div>
-              </div>
-            ))}
+              )
+            })}
+            <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
+              <button style={{...T.btn,padding:'6px 14px',fontSize:9,opacity:prizePage===0?0.3:1}} disabled={prizePage===0} onClick={()=>setPrizePage(p=>p-1)}>← PREV</button>
+              <span style={{fontSize:10,color:'#444'}}>
+                {prizePage===0?'Top 10':`${10+(prizePage-1)*10+1}-${Math.min(10+prizePage*10,prizeLeaderboard.length)}`} of {prizeLeaderboard.length}
+              </span>
+              <button style={{...T.btn,padding:'6px 14px',fontSize:9,opacity:10+prizePage*10>=prizeLeaderboard.length?0.3:1}} disabled={10+prizePage*10>=prizeLeaderboard.length} onClick={()=>setPrizePage(p=>p+1)}>NEXT →</button>
+            </div>
 
             {pastWinners.length > 0 && (
               <div style={{marginTop:24}}>
@@ -2641,6 +2815,173 @@ function FanDashboard({ session, onSignOut }) {
           </div>
         )}
 
+        {/* ── WAR ROOM ── */}
+        {tab==='warroom' && !activeWarRoom && (
+          <div>
+            <div style={{fontSize:9,color:'#333',letterSpacing:3,marginBottom:16}}>WAR ROOMS</div>
+            {warRoomMsg && <div style={{fontSize:11,color:'#b4ff3c',marginBottom:12}}>{warRoomMsg}</div>}
+
+            {myWarRooms.length > 0 && (
+              <div style={{marginBottom:24}}>
+                <div style={{fontSize:9,color:'#ff2d78',letterSpacing:2,marginBottom:10}}>MY WAR ROOMS</div>
+                {myWarRooms.map(m=>(
+                  <div key={m.id} style={{...T.card,marginBottom:8,borderLeft:'3px solid #ff2d78'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <div>
+                        <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{m.war_rooms?.name}</div>
+                        <div style={{fontSize:10,color:'#444'}}>{m.war_rooms?.artists?.name} · {m.war_rooms?.subscriber_count||0} members</div>
+                        <div style={{fontSize:9,color:'#555',marginTop:2}}>Coach: @{m.war_rooms?.fans?.username||'TBD'}</div>
+                      </div>
+                      <div style={{display:'flex',gap:8}}>
+                        <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={()=>openWarRoom(m.war_rooms)}>ENTER →</button>
+                        <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontSize:10,fontFamily:'monospace'}} onClick={()=>leaveWarRoom(m.war_rooms?.id)}>LEAVE</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10}}>ALL WAR ROOMS</div>
+            {warRooms.map(wr=>{
+              const isMember = myWarRooms.find(m=>m.war_rooms?.id===wr.id)
+              return (
+                <div key={wr.id} style={{...T.card,marginBottom:8,borderLeft:`3px solid ${wr.artists?.tier==='superstar'?'#ffd60a':'#b4ff3c'}`}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                      <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{wr.name}</div>
+                      <div style={{fontSize:10,color:'#444'}}>{wr.artists?.name} · {wr.subscriber_count||0} members</div>
+                      <div style={{fontSize:9,color:'#555',marginTop:2}}>Coach: @{wr.fans?.username||'TBD'} · {wr.artists?.tier?.toUpperCase()}</div>
+                    </div>
+                    {isMember ? (
+                      <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={()=>openWarRoom(wr)}>ENTER →</button>
+                    ) : (
+                      <button style={{...T.greenBtn,fontSize:9,padding:'6px 12px'}} onClick={()=>{ if(!fan?.subscribed){setWarRoomMsg('Subscribe to join a War Room');return} joinWarRoom(wr.id) }}>JOIN</button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            {warRooms.length===0 && <div style={{fontSize:11,color:'#222'}}>No War Rooms yet — admin creates them</div>}
+          </div>
+        )}
+
+        {/* ── WAR ROOM INTERIOR ── */}
+        {tab==='warroom' && activeWarRoom && (
+          <div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+              <div>
+                <button style={{background:'transparent',border:'none',color:'#444',cursor:'pointer',fontFamily:'monospace',fontSize:10,letterSpacing:2,marginBottom:6,padding:0}} onClick={()=>setActiveWarRoom(null)}>← BACK</button>
+                <div style={{fontSize:14,color:'#fff',fontWeight:500}}>{activeWarRoom.name}</div>
+                <div style={{fontSize:10,color:'#444'}}>{activeWarRoom.artists?.name} · {warRoomMembers.length} members</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:9,color:'#ff2d78',letterSpacing:2,marginBottom:4}}>HEAD COACH</div>
+                <div style={{fontSize:11,color:'#fff'}}>@{activeWarRoom.fans?.username||'TBD'}</div>
+              </div>
+            </div>
+
+            {/* Pinned posts */}
+            {warRoomPosts.filter(p=>p.pinned).map(p=>(
+              <div key={p.id} style={{border:'1px solid rgba(255,215,0,0.3)',borderRadius:6,padding:'10px 14px',marginBottom:10,background:'rgba(255,215,0,0.04)'}}>
+                <div style={{fontSize:9,color:'#ffd60a',letterSpacing:2,marginBottom:4}}>📌 PINNED STRATEGY</div>
+                <div style={{fontSize:11,color:'#fff'}}>{p.content}</div>
+                <div style={{fontSize:9,color:'#444',marginTop:4}}>@{p.fans?.username}</div>
+              </div>
+            ))}
+
+            {/* Active polls */}
+            {warRoomPolls.map(poll=>(
+              <div key={poll.id} style={{border:'1px solid rgba(180,255,60,0.2)',borderRadius:6,padding:'12px 14px',marginBottom:10,background:'rgba(180,255,60,0.03)'}}>
+                <div style={{fontSize:9,color:'#b4ff3c',letterSpacing:2,marginBottom:8}}>📊 POLL</div>
+                <div style={{fontSize:12,color:'#fff',marginBottom:10}}>{poll.question}</div>
+                {Object.entries(poll.options).map(([opt,count])=>{
+                  const totalVotes = Object.values(poll.options).reduce((s,v)=>s+v,0)||1
+                  const pct = Math.round((count/totalVotes)*100)
+                  const voted = poll.votes[fan?.id]===opt
+                  return (
+                    <div key={opt} style={{marginBottom:6}}>
+                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:2}}>
+                        <button style={{background:'transparent',border:'none',color:voted?'#b4ff3c':'#888',cursor:'pointer',fontFamily:'monospace',fontSize:11,padding:0,textAlign:'left'}} onClick={()=>votePoll(poll.id,opt)}>
+                          {voted?'✓ ':''}{opt}
+                        </button>
+                        <span style={{fontSize:10,color:'#444'}}>{pct}%</span>
+                      </div>
+                      <div style={{background:'#111',borderRadius:2,height:3}}>
+                        <div style={{width:`${pct}%`,height:3,background:'#b4ff3c',borderRadius:2,transition:'width 0.4s'}} />
+                      </div>
+                    </div>
+                  )
+                })}
+                <div style={{fontSize:9,color:'#444',marginTop:6}}>{Object.keys(poll.votes).length} votes</div>
+              </div>
+            ))}
+
+            {/* Coach tools */}
+            {activeWarRoom.head_coach_id === fan?.id && (
+              <div style={{border:'1px solid rgba(255,45,120,0.2)',borderRadius:6,padding:'12px 14px',marginBottom:12,background:'rgba(255,45,120,0.03)'}}>
+                <div style={{fontSize:9,color:'#ff2d78',letterSpacing:2,marginBottom:10}}>HEAD COACH TOOLS</div>
+                {!showPollForm ? (
+                  <div style={{display:'flex',gap:8}}>
+                    <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={()=>setShowPollForm(true)}>+ POLL</button>
+                    <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={async()=>{
+                      const content = prompt('Enter pinned strategy:')
+                      if (!content) return
+                      await supabase.from('war_room_posts').insert({ war_room_id: activeWarRoom.id, fan_id: fan.id, content, type:'strategy', pinned:true })
+                      openWarRoom(activeWarRoom)
+                    }}>📌 PIN STRATEGY</button>
+                  </div>
+                ) : (
+                  <div>
+                    <input style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:11,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:8}} placeholder="Poll question..." value={pollForm.question} onChange={e=>setPollForm({...pollForm,question:e.target.value})} />
+                    {pollForm.options.map((opt,i)=>(
+                      <input key={i} style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'6px 8px',fontSize:11,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:6}} placeholder={`Option ${i+1}...`} value={opt} onChange={e=>{ const o=[...pollForm.options]; o[i]=e.target.value; setPollForm({...pollForm,options:o}) }} />
+                    ))}
+                    <div style={{display:'flex',gap:8,marginTop:4}}>
+                      <button style={{...T.greenBtn,fontSize:9,padding:'6px 12px'}} onClick={()=>setPollForm({...pollForm,options:[...pollForm.options,'']})}>+ OPTION</button>
+                      <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={createPoll}>CREATE POLL →</button>
+                      <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontFamily:'monospace',fontSize:10}} onClick={()=>setShowPollForm(false)}>CANCEL</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Chat */}
+            <div style={{border:'1px solid #111',borderRadius:6,overflow:'hidden',marginBottom:12}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:2,padding:'8px 14px',borderBottom:'1px solid #111'}}>CHAT</div>
+              <div style={{maxHeight:240,overflowY:'auto',padding:'10px 14px',display:'flex',flexDirection:'column-reverse'}}>
+                {warRoomPosts.filter(p=>!p.pinned&&p.type==='message').map((p,i)=>(
+                  <div key={p.id||i} style={{marginBottom:8}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:10,color:p.fan_id===fan?.id?'#ff2d78':activeWarRoom.head_coach_id===p.fan_id?'#ffd60a':'#555'}}>
+                        {activeWarRoom.head_coach_id===p.fan_id?'👑 ':''}{p.fans?.username||'fan'}
+                      </span>
+                      {activeWarRoom.head_coach_id===fan?.id && !p.pinned && (
+                        <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontSize:9,fontFamily:'monospace'}} onClick={()=>pinPost(p.id)}>📌</button>
+                      )}
+                    </div>
+                    <div style={{fontSize:11,color:'#888'}}>{p.content}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:'flex',borderTop:'1px solid #111'}}>
+                <input style={{flex:1,background:'transparent',border:'none',color:'#fff',padding:'10px 14px',fontSize:11,fontFamily:'monospace',outline:'none'}} placeholder="Say something..." value={warRoomInput} onChange={e=>setWarRoomInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendWarRoomMessage()} />
+                <button style={{background:'transparent',border:'none',borderLeft:'1px solid #111',color:'#ff2d78',padding:'10px 14px',cursor:'pointer',fontFamily:'monospace',fontSize:10}} onClick={()=>sendWarRoomMessage()}>SEND</button>
+              </div>
+            </div>
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>MEMBERS — {warRoomMembers.length}</div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {warRoomMembers.map(m=>(
+                <span key={m.id} style={{fontSize:10,color:m.fan_id===activeWarRoom.head_coach_id?'#ffd60a':m.fan_id===fan?.id?'#ff2d78':'#555',padding:'4px 10px',border:`1px solid ${m.fan_id===activeWarRoom.head_coach_id?'rgba(255,215,0,0.3)':m.fan_id===fan?.id?'rgba(255,45,120,0.3)':'rgba(255,255,255,0.08)'}`,borderRadius:99}}>
+                  {m.fan_id===activeWarRoom.head_coach_id?'👑 ':''}{m.fan_id===fan?.id?'you':`@${m.fans?.username||'fan'}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── PROFILE ── */}
         {tab==='profile' && (
           <div>
@@ -2742,6 +3083,148 @@ const L = {
 
 const PR = {
   btn:{flex:1,background:'rgba(255,255,255,0.02)',border:'1px solid',borderRadius:6,padding:'24px 16px',cursor:'pointer',fontFamily:'monospace'},
+}
+
+function PlayoffBracket({ bracket }) {
+  const rounds = [1,2,3,4]
+  const roundNames = {1:'FIRST ROUND',2:'SEMIFINALS',3:'CONFERENCE FINALS',4:'CHAMPIONSHIP'}
+  const COLORS = ['#ff2d78','#b4ff3c','#ffd60a','#ff9500','#7F77DD','#1D9E75','#378ADD','#D85A30']
+
+  function SeriesCard({ s, i }) {
+    if (!s) return (
+      <div style={{width:140,height:56,border:'1px solid #222',borderRadius:4,background:'rgba(255,255,255,0.02)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <span style={{fontSize:9,color:'#333',letterSpacing:1}}>TBD</span>
+      </div>
+    )
+    return (
+      <div style={{width:140,border:`1px solid ${s.status==='finished'?'#222':'rgba(255,45,120,0.3)'}`,borderRadius:4,background:'rgba(255,255,255,0.02)',overflow:'hidden'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 8px',borderBottom:'1px solid #111',background:s.winner_id===s.artist1_id?'rgba(255,215,0,0.08)':'transparent'}}>
+          <span style={{fontSize:10,color:s.winner_id===s.artist1_id?'#ffd60a':'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:90}}>{s.artist1?.name||'TBD'}</span>
+          <span style={{fontSize:12,color:s.winner_id===s.artist1_id?'#ffd60a':'#fff',fontWeight:700,minWidth:16,textAlign:'right'}}>{s.artist1_wins}</span>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 8px',background:s.winner_id===s.artist2_id?'rgba(255,215,0,0.08)':'transparent'}}>
+          <span style={{fontSize:10,color:s.winner_id===s.artist2_id?'#ffd60a':'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:90}}>{s.artist2?.name||'TBD'}</span>
+          <span style={{fontSize:12,color:s.winner_id===s.artist2_id?'#ffd60a':'#fff',fontWeight:700,minWidth:16,textAlign:'right'}}>{s.artist2_wins}</span>
+        </div>
+      </div>
+    )
+  }
+
+  const round1 = bracket.filter(s=>s.round===1)
+  const round2 = bracket.filter(s=>s.round===2)
+  const round3 = bracket.filter(s=>s.round===3)
+  const round4 = bracket.filter(s=>s.round===4)
+  const maxR1 = Math.max(round1.length, 8)
+
+  return (
+    <div style={{fontFamily:'monospace',minWidth:640}}>
+      <div style={{display:'flex',gap:0,alignItems:'stretch'}}>
+
+        {/* Round 1 — left */}
+        <div style={{display:'flex',flexDirection:'column',justifyContent:'space-around',gap:8,paddingRight:8}}>
+          <div style={{fontSize:8,color:'#ff2d78',letterSpacing:2,marginBottom:4,textAlign:'center'}}>{roundNames[1]}</div>
+          {Array.from({length:Math.ceil(maxR1/2)}).map((_,i)=>(
+            <div key={i} style={{display:'flex',flexDirection:'column',justifyContent:'center',flex:1}}>
+              <SeriesCard s={round1[i]} i={i} />
+            </div>
+          ))}
+        </div>
+
+        {/* Connector lines */}
+        <div style={{width:20,display:'flex',flexDirection:'column',justifyContent:'space-around'}}>
+          {Array.from({length:Math.ceil(maxR1/4)}).map((_,i)=>(
+            <div key={i} style={{flex:1,display:'flex',alignItems:'center'}}>
+              <div style={{width:'100%',borderTop:'1px solid #333',borderRight:'1px solid #333',borderBottom:'1px solid #333',height:'50%',borderLeft:'none'}} />
+            </div>
+          ))}
+        </div>
+
+        {/* Round 2 — left */}
+        <div style={{display:'flex',flexDirection:'column',justifyContent:'space-around',gap:8,paddingRight:8}}>
+          <div style={{fontSize:8,color:'#ff9500',letterSpacing:2,marginBottom:4,textAlign:'center'}}>{roundNames[2]}</div>
+          {Array.from({length:Math.max(round2.length,2)}).map((_,i)=>(
+            <div key={i} style={{display:'flex',flexDirection:'column',justifyContent:'center',flex:1}}>
+              <SeriesCard s={round2[i]} i={i} />
+            </div>
+          ))}
+        </div>
+
+        {/* Connector lines */}
+        <div style={{width:20,display:'flex',flexDirection:'column',justifyContent:'space-around'}}>
+          <div style={{flex:1,display:'flex',alignItems:'center'}}>
+            <div style={{width:'100%',borderTop:'1px solid #333',borderRight:'1px solid #333',borderBottom:'1px solid #333',height:'50%',borderLeft:'none'}} />
+          </div>
+        </div>
+
+        {/* Championship center */}
+        <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,padding:'0 8px',flex:1}}>
+          <div style={{fontSize:8,color:'#ffd60a',letterSpacing:2,marginBottom:4}}>CHAMPIONSHIP</div>
+          {round4.length > 0 ? <SeriesCard s={round4[0]} i={0} /> : (
+            <div style={{width:140,height:56,border:'1px solid rgba(255,215,0,0.3)',borderRadius:4,background:'rgba(255,215,0,0.03)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <span style={{fontSize:9,color:'#444',letterSpacing:1}}>FINAL</span>
+            </div>
+          )}
+          {round4[0]?.winner_id && (
+            <div style={{textAlign:'center',marginTop:8}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>CHAMPION</div>
+              <div style={{fontSize:13,color:'#ffd60a',fontWeight:700}}>🏆 {round4[0]?.winner?.name}</div>
+            </div>
+          )}
+          {!round4[0]?.winner_id && round3.length > 0 && (
+            <div style={{textAlign:'center',marginTop:8}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:4}}>CHAMPION</div>
+              <div style={{width:140,height:28,border:'1px solid rgba(255,215,0,0.2)',borderRadius:4,background:'rgba(255,215,0,0.02)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <span style={{fontSize:9,color:'#444'}}>TBD</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Connector lines right */}
+        <div style={{width:20,display:'flex',flexDirection:'column',justifyContent:'space-around'}}>
+          <div style={{flex:1,display:'flex',alignItems:'center'}}>
+            <div style={{width:'100%',borderTop:'1px solid #333',borderLeft:'1px solid #333',borderBottom:'1px solid #333',height:'50%',borderRight:'none'}} />
+          </div>
+        </div>
+
+        {/* Round 2 — right */}
+        <div style={{display:'flex',flexDirection:'column',justifyContent:'space-around',gap:8,paddingLeft:8}}>
+          <div style={{fontSize:8,color:'#ff9500',letterSpacing:2,marginBottom:4,textAlign:'center'}}>{roundNames[2]}</div>
+          {Array.from({length:Math.max(round2.length,2)}).map((_,i)=>{
+            const idx = Math.floor(round2.length/2)+i
+            return (
+              <div key={i} style={{display:'flex',flexDirection:'column',justifyContent:'center',flex:1}}>
+                <SeriesCard s={round2[idx]} i={idx} />
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Connector lines */}
+        <div style={{width:20,display:'flex',flexDirection:'column',justifyContent:'space-around'}}>
+          {Array.from({length:Math.ceil(maxR1/4)}).map((_,i)=>(
+            <div key={i} style={{flex:1,display:'flex',alignItems:'center'}}>
+              <div style={{width:'100%',borderTop:'1px solid #333',borderLeft:'1px solid #333',borderBottom:'1px solid #333',height:'50%',borderRight:'none'}} />
+            </div>
+          ))}
+        </div>
+
+        {/* Round 1 — right */}
+        <div style={{display:'flex',flexDirection:'column',justifyContent:'space-around',gap:8,paddingLeft:8}}>
+          <div style={{fontSize:8,color:'#ff2d78',letterSpacing:2,marginBottom:4,textAlign:'center'}}>{roundNames[1]}</div>
+          {Array.from({length:Math.ceil(maxR1/2)}).map((_,i)=>{
+            const idx = Math.ceil(round1.length/2)+i
+            return (
+              <div key={i} style={{display:'flex',flexDirection:'column',justifyContent:'center',flex:1}}>
+                <SeriesCard s={round1[idx]} i={idx} />
+              </div>
+            )
+          })}
+        </div>
+
+      </div>
+    </div>
+  )
 }
 
 function getEmbedUrl(url) {
@@ -3218,17 +3701,23 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate, onPointsUpdate }) {
     else setInstr('Click on fire net or trash can to shoot')
   }
 
+  const [sentPage, setSentPage] = useState(0)
+
   const allTimeTop = Object.entries(sentiment)
     .map(([id,s])=>({ item: catalog.find(c=>c.id===id), fire:s.fire, trash:s.trash, total:s.fire+s.trash }))
     .filter(x=>x.item&&x.total>0)
     .sort((a,b)=>b.total-a.total)
-    .slice(0,5)
+    .slice(0,10)
 
   const weekTop = Object.entries(weekSentiment)
     .map(([id,s])=>({ item: catalog.find(c=>c.id===id), fire:s.fire, trash:s.trash, total:s.fire+s.trash }))
     .filter(x=>x.item&&x.total>0)
     .sort((a,b)=>b.total-a.total)
-    .slice(0,5)
+    .slice(0,10)
+
+  const weekPage = weekTop.slice(sentPage*5, sentPage*5+5)
+  const allPage = allTimeTop.slice(sentPage*5, sentPage*5+5)
+  const totalPages = Math.max(Math.ceil(weekTop.length/5), Math.ceil(allTimeTop.length/5), 1)
 
   return (
     <div style={{fontFamily:'monospace'}}>
@@ -3303,34 +3792,41 @@ function AlbumShootout({ fan, supabase, onCoinsUpdate, onPointsUpdate }) {
         </div>
       )}
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginTop:20}}>
-        <div>
-          <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10}}>THIS WEEK</div>
-          {weekTop.length===0 && <div style={{fontSize:11,color:'#222'}}>No shots this week</div>}
-          {weekTop.map((x,i)=>(
-            <div key={x.item.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 10px',background:'rgba(255,255,255,0.02)',borderRadius:4}}>
-              <span style={{fontSize:12,color:COLORS[i%COLORS.length],fontWeight:700,minWidth:20}}>#{i+1}</span>
-              {x.item.cover_url && <img src={x.item.cover_url} alt="" style={{width:28,height:28,objectFit:'cover',borderRadius:2,flexShrink:0}} />}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:10,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{x.item.title}</div>
-                <div style={{fontSize:9,color:'#444'}}>{x.fire}🔥 {x.trash}🗑</div>
+     <div style={{marginTop:20}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:12}}>
+          <div>
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10}}>THIS WEEK</div>
+            {weekPage.length===0 && <div style={{fontSize:11,color:'#222'}}>No shots this week</div>}
+            {weekPage.map((x,i)=>(
+              <div key={x.item.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 10px',background:'rgba(255,255,255,0.02)',borderRadius:4}}>
+                <span style={{fontSize:12,color:COLORS[(sentPage*5+i)%COLORS.length],fontWeight:700,minWidth:20}}>#{sentPage*5+i+1}</span>
+                {x.item.cover_url && <img src={x.item.cover_url} alt="" style={{width:28,height:28,objectFit:'cover',borderRadius:2,flexShrink:0}} />}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:10,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{x.item.title}</div>
+                  <div style={{fontSize:9,color:'#444'}}>{x.fire}🔥 {x.trash}🗑</div>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div>
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10}}>ALL TIME</div>
+            {allPage.length===0 && <div style={{fontSize:11,color:'#222'}}>No shots yet</div>}
+            {allPage.map((x,i)=>(
+              <div key={x.item.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 10px',background:'rgba(255,255,255,0.02)',borderRadius:4}}>
+                <span style={{fontSize:12,color:COLORS[(sentPage*5+i)%COLORS.length],fontWeight:700,minWidth:20}}>#{sentPage*5+i+1}</span>
+                {x.item.cover_url && <img src={x.item.cover_url} alt="" style={{width:28,height:28,objectFit:'cover',borderRadius:2,flexShrink:0}} />}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:10,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{x.item.title}</div>
+                  <div style={{fontSize:9,color:'#444'}}>{x.fire}🔥 {x.trash}🗑</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        <div>
-          <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:10}}>ALL TIME</div>
-          {allTimeTop.length===0 && <div style={{fontSize:11,color:'#222'}}>No shots yet</div>}
-          {allTimeTop.map((x,i)=>(
-            <div key={x.item.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,padding:'6px 10px',background:'rgba(255,255,255,0.02)',borderRadius:4}}>
-              <span style={{fontSize:12,color:COLORS[i%COLORS.length],fontWeight:700,minWidth:20}}>#{i+1}</span>
-              {x.item.cover_url && <img src={x.item.cover_url} alt="" style={{width:28,height:28,objectFit:'cover',borderRadius:2,flexShrink:0}} />}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:10,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{x.item.title}</div>
-                <div style={{fontSize:9,color:'#444'}}>{x.fire}🔥 {x.trash}🗑</div>
-              </div>
-            </div>
-          ))}
+        <div style={{display:'flex',gap:8,alignItems:'center',justifyContent:'center'}}>
+          <button style={{background:'transparent',border:'1px solid rgba(255,45,120,0.3)',color:'#ff2d78',padding:'6px 14px',fontSize:9,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',opacity:sentPage===0?0.3:1}} disabled={sentPage===0} onClick={()=>setSentPage(p=>p-1)}>← PREV</button>
+          <span style={{fontSize:10,color:'#444'}}>{sentPage+1} of {totalPages}</span>
+          <button style={{background:'transparent',border:'1px solid rgba(255,45,120,0.3)',color:'#ff2d78',padding:'6px 14px',fontSize:9,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',opacity:sentPage+1>=totalPages?0.3:1}} disabled={sentPage+1>=totalPages} onClick={()=>setSentPage(p=>p+1)}>NEXT →</button>
         </div>
       </div>
     </div>
