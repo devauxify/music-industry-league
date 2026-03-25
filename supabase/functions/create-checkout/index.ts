@@ -17,27 +17,28 @@ serve(async (req) => {
   }
 
   try {
-    const { priceId, userId, role } = await req.json()
+    const { priceId, userId, role, warRoomId, warRoomName } = await req.json()
+    const isSubscription = role === 'fan' || role === 'warroom'
+    const origin = req.headers.get('origin') || 'http://localhost:3000'
 
-    const isSubscription = role === 'fan' || role === 'artist'
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       mode: isSubscription ? 'subscription' : 'payment',
-      success_url: `${req.headers.get('origin')}/success?session_id={CHECKOUT_SESSION_ID}&role=${role}&user_id=${userId}`,
-      cancel_url: `${req.headers.get('origin')}/cancel`,
-      metadata: { userId, role },
+      success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}&role=${role}&user_id=${userId}${warRoomId?`&war_room_id=${warRoomId}`:''}`,
+      cancel_url: `${origin}/cancel`,
+      metadata: { userId, role, warRoomId: warRoomId||'', warRoomName: warRoomName||'' },
     })
-
 
     return new Response(JSON.stringify({ url: session.url }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     })
-   } catch (error: any) {
+  } catch (error: any) {
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     })
   }
 })
+

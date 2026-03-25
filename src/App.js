@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from './supabaseClient'
 import Auth from './Auth'
 
-async function createCheckout(priceId, userId, role) {
+async function createCheckout(priceId, userId, role, warRoomId=null, warRoomName=null) {
   try {
     const { data, error } = await supabase.functions.invoke('create-checkout', {
-      body: { priceId, userId, role }
+      body: { priceId, userId, role, warRoomId, warRoomName }
     })
     if (error) throw error
     if (data?.url) {
@@ -58,6 +58,18 @@ export default function App() {
             await supabase.from('prize_pools').update({ fan_sub_count: (pool.fan_sub_count||0)+1, total_amount: (pool.total_amount||0)+0.50 }).eq('id', pool.id)
           } else {
             await supabase.from('prize_pools').insert({ month: now.getMonth()+1, year: now.getFullYear(), fan_sub_count:1, total_amount:0.50, status:'active' })
+          }
+        }
+        if (role === 'warroom') {
+          const warRoomId = params.get('war_room_id')
+          await supabase.from('fans').update({ subscribed: true }).eq('id', userId)
+          if (warRoomId) {
+            const { data: fanData } = await supabase.from('fans').select('id').eq('id', userId).single()
+            if (fanData) {
+              await supabase.from('war_room_members').upsert({ war_room_id: warRoomId, fan_id: fanData.id, role: 'player', active: true }, { onConflict: 'war_room_id,fan_id' })
+              const { data: wr } = await supabase.from('war_rooms').select('subscriber_count').eq('id', warRoomId).single()
+              await supabase.from('war_rooms').update({ subscriber_count: (wr?.subscriber_count||0)+1 }).eq('id', warRoomId)
+            }
           }
         }
         if (role === 'coins_6') {
@@ -159,23 +171,23 @@ function Landing({ onArtist, onFan }) {
           <div style={L.card} onClick={onArtist}>
             <div style={L.cardEmoji}>🎵</div>
             <div style={L.cardTitle}>ARTIST PORTAL</div>
-            <div style={L.cardBody}>Create your profile, log your activity across 15 categories, go live with a $60/yr subscription</div>
+            <div style={L.cardBody}>Create your profile, log activity across charts, awards and festivals, go live with a yearly subscription</div>
             <div style={L.cardCta}>ENTER PORTAL →</div>
           </div>
           <div style={{...L.card, borderColor:'rgba(180,255,60,0.25)', background:'rgba(180,255,60,0.03)'}} onClick={onFan}>
             <div style={L.cardEmoji}>🎧</div>
             <div style={L.cardTitle}>FAN DASHBOARD</div>
-            <div style={L.cardBody}>Back artists, build rosters, earn multiplied points when artists tier up — and win cash prizes</div>
+            <div style={L.cardBody}>Back artists, join War Rooms, compete in the arena, earn points and win cash prizes every month</div>
             <div style={{...L.cardCta, color:'#b4ff3c'}}>JOIN THE LEAGUE →</div>
           </div>
         </div>
         <div style={L.prizeBanner}>
-          <span style={{color:'#ffd60a',fontWeight:800}}>💰 CURRENT PRIZE POOL: $2,400</span>
+          <span style={{color:'#ffd60a',fontWeight:800}}>💰 MONTHLY PRIZE POOL</span>
           <span style={{color:'#444',fontSize:11}}>·</span>
-          <span style={{color:'#555',fontSize:11}}>Resets weekly · Top 4 fans win cash</span>
+          <span style={{color:'#555',fontSize:11}}>Resets monthly · Top fans win cash</span>
         </div>
         <div style={L.statRow}>
-          {[['8','ARTISTS'],['5','TIERS'],['15','ACTIVITIES'],['×20','MAX MULT'],['$1,200','TOP PRIZE']].map(([n,l],i) => (
+          {[['32','ARTISTS'],['5','TIERS'],['3','SEASONS'],['×20','MAX MULT'],['82','GAMES']].map(([n,l],i) => (
             <div key={i} style={L.stat}>
               <span style={{...L.statN, color:i===4?'#ffd60a':i===3?'#ff2d78':'#fff'}}>{n}</span>
               <span style={L.statL}>{l}</span>
@@ -648,7 +660,7 @@ function AdminDashboard({ session, onSignOut }) {
     <div style={T.root}>
       <div style={T.header}>
         <div>
-          <div style={T.logo}>MUSIC INDUSTRY LEAGUE — ADMIN</div>
+          <div style={T.logo}>ENTERTAINMENT INDUSTRY LEAGUE — ADMIN</div>
           <div style={T.email}>{session.user.email}</div>
         </div>
         <div style={{display:'flex',gap:8}}>
@@ -933,7 +945,9 @@ function AdminDashboard({ session, onSignOut }) {
                 }}>REMOVE</button>
               </div>
             ))}
-            {tab==='warrooms' && (
+          </div>
+        )}
+        {tab==='warrooms' && (
           <div>
             <div style={{fontSize:10,color:'#333',marginBottom:20,letterSpacing:2}}>WAR ROOM MANAGER</div>
 
@@ -986,9 +1000,6 @@ function AdminDashboard({ session, onSignOut }) {
             ))}
           </div>
         )}
-          </div>
-        )}
-
       </div>
     </div>
   )
@@ -1305,7 +1316,7 @@ function ArtistDashboard({ session, onSignOut }) {
     <div style={T.root}>
       <div style={T.header}>
   <div>
-    <div style={T.logo}>MUSIC INDUSTRY LEAGUE — ARTIST</div>
+    <div style={T.logo}>ENTERTAINMENT INDUSTRY LEAGUE — ARTIST</div>
     <div style={{fontSize:10,color:'#333'}}>{artist?.name || session.user.email}</div>
   </div>
   <div style={{display:'flex',gap:16,alignItems:'center'}}>
@@ -1684,6 +1695,7 @@ function FanDashboard({ session, onSignOut }) {
   const [warRoomMembers, setWarRoomMembers] = useState([])
   const [warRoomMsg, setWarRoomMsg] = useState('')
   const [warRoomInput, setWarRoomInput] = useState('')
+  const [movingFromId, setMovingFromId] = useState(null)
   const [pollForm, setPollForm] = useState({ question:'', options:['',''] })
   const [showPollForm, setShowPollForm] = useState(false)
   const [pinnedPost, setPinnedPost] = useState('')
@@ -1697,6 +1709,7 @@ function FanDashboard({ session, onSignOut }) {
     if (tab === 'prizes') loadPrizes()
     if (tab === 'groups') loadGroups()
     if (tab === 'warroom') loadWarRooms()  
+    if (tab === 'subscriptions') loadWarRooms()  
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
@@ -1734,8 +1747,14 @@ function FanDashboard({ session, onSignOut }) {
       setStandingsTotal(statsCount || 0)
     }
     if (seasonData) {
-      const { data: bracket } = await supabase.from('playoffs').select('*, artist1:artist1_id(name,tier), artist2:artist2_id(name,tier), winner:winner_id(name)').eq('season_id', seasonData.id).order('round').order('series_number')
-      setPlayoffBracket(bracket || [])
+     const { data: bracket } = await supabase.from('playoffs').select('*, artist1:artist1_id(name,tier), artist2:artist2_id(name,tier), winner:winner_id(name)').eq('season_id', seasonData.id).order('round').order('series_number')
+      const { data: standings } = await supabase.from('artist_season_stats').select('artist_id').eq('season_id', seasonData.id).order('wins', { ascending: false })
+      const seededBracket = (bracket||[]).map(s=>({
+        ...s,
+        seed1: standings ? standings.findIndex(x=>x.artist_id===s.artist1_id)+1 : '?',
+        seed2: standings ? standings.findIndex(x=>x.artist_id===s.artist2_id)+1 : '?'
+      }))
+      setPlayoffBracket(seededBracket || [])
     }
     setLoading(false)
   }
@@ -1946,6 +1965,7 @@ function FanDashboard({ session, onSignOut }) {
 
   async function castVote(quarterId, gameId, artistId, artistName) {
     if (!fan) return
+    if (!fan.subscribed) { alert('Subscribe to participate in arena games'); return }
     const { error } = await supabase.from('fan_votes').insert({ fan_id: fan.id, game_id: gameId, quarter_id: quarterId, voted_for: artistId })
     if (!error) {
       setVotes(v => ({ ...v, [quarterId]: artistId }))
@@ -2041,6 +2061,7 @@ function FanDashboard({ session, onSignOut }) {
 
   async function sendChat() {
     if (!chatInput.trim() || !fan || !activeGame) return
+    if (!fan.subscribed) { setChatInput(''); return }
     if (quarterBuzzing) { setChatInput(''); return }
     const msg = chatInput.trim()
     if (msg.length < 5) { setChatInput(''); return }
@@ -2146,7 +2167,7 @@ function FanDashboard({ session, onSignOut }) {
     <div style={T.root}>
       <div style={T.header}>
         <div>
-          <div style={{fontSize:11,letterSpacing:3,color:'#ff2d78'}}>MUSIC INDUSTRY LEAGUE</div>
+          <div style={{fontSize:11,letterSpacing:3,color:'#ff2d78'}}>ENTERTAINMENT INDUSTRY LEAGUE</div>
           <div style={{fontSize:10,color:'#333',marginTop:2}}>{fan?.username || session.user.email}</div>
         </div>
         <div style={{display:'flex',gap:16,alignItems:'center'}}>
@@ -2167,7 +2188,7 @@ function FanDashboard({ session, onSignOut }) {
         </div>
       )}
       <div style={T.nav}>
-        {[['league','THE LEAGUE'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['prizes','PRIZES'],['warroom','WAR ROOM'],['profile','MY PROFILE']].map(([id,label])=>(
+        {[['league','THE LEAGUE'],['games','GAMES'],['standings','STANDINGS'],['playoffs','PLAYOFFS'],['shootout','SHOOTOUT'],['prizes','PRIZES'],['warroom','WAR ROOM'],['subscriptions','SUBSCRIPTIONS'],['profile','MY PROFILE']].map(([id,label])=>(
           <button key={id} style={{...T.navBtn,...(tab===id?T.navActive:{})}} onClick={()=>setTab(id)}>{label}</button>
         ))}
       </div>
@@ -2833,8 +2854,12 @@ function FanDashboard({ session, onSignOut }) {
                         <div style={{fontSize:9,color:'#555',marginTop:2}}>Coach: @{m.war_rooms?.fans?.username||'TBD'}</div>
                       </div>
                       <div style={{display:'flex',gap:8}}>
-                        <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={()=>openWarRoom(m.war_rooms)}>ENTER →</button>
-                        <button style={{background:'transparent',border:'none',color:'#333',cursor:'pointer',fontSize:10,fontFamily:'monospace'}} onClick={()=>leaveWarRoom(m.war_rooms?.id)}>LEAVE</button>
+                       <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={()=>openWarRoom(m.war_rooms)}>ENTER →</button>
+                        <button style={{...T.greenBtn,fontSize:9,padding:'6px 12px'}} onClick={()=>{
+                          setMovingFromId(m.war_rooms?.id)
+                          setWarRoomMsg('Select a War Room below to move to')
+                        }}>MOVE</button>
+                        
                       </div>
                     </div>
                   </div>
@@ -2856,7 +2881,26 @@ function FanDashboard({ session, onSignOut }) {
                     {isMember ? (
                       <button style={{...T.btn,fontSize:9,padding:'6px 12px'}} onClick={()=>openWarRoom(wr)}>ENTER →</button>
                     ) : (
-                      <button style={{...T.greenBtn,fontSize:9,padding:'6px 12px'}} onClick={()=>{ if(!fan?.subscribed){setWarRoomMsg('Subscribe to join a War Room');return} joinWarRoom(wr.id) }}>JOIN</button>
+                      <button style={{...T.greenBtn,fontSize:9,padding:'6px 12px'}} onClick={async()=>{
+  if (movingFromId) {
+    await supabase.from('war_room_members').delete().eq('fan_id', fan.id).eq('war_room_id', movingFromId)
+    const { data: oldWr } = await supabase.from('war_rooms').select('subscriber_count').eq('id', movingFromId).single()
+    await supabase.from('war_rooms').update({ subscriber_count: Math.max(0,(oldWr?.subscriber_count||1)-1) }).eq('id', movingFromId)
+    await joinWarRoom(wr.id)
+    setMovingFromId(null)
+    setWarRoomMsg(`Moved to ${wr.name}!`)
+    loadWarRooms()
+  } else if (fan?.subscribed && myWarRooms.length === 0) {
+    await joinWarRoom(wr.id)
+    setWarRoomMsg(`Joined ${wr.name}!`)
+  } else if (!fan?.subscribed) {
+    createCheckout(process.env.REACT_APP_STRIPE_FAN_PRICE, fan?.id, 'warroom', wr.id, wr.name)
+  } else {
+    createCheckout(process.env.REACT_APP_STRIPE_FAN_PRICE, fan?.id, 'warroom', wr.id, wr.name)
+  }
+}}>
+  {movingFromId ? 'MOVE HERE →' : fan?.subscribed && myWarRooms.length === 0 ? 'JOIN' : 'JOIN $5/mo'}
+</button>
                     )}
                   </div>
                 </div>
@@ -2982,8 +3026,64 @@ function FanDashboard({ session, onSignOut }) {
           </div>
         )}
 
+        {/* ── SUBSCRIPTIONS ── */}
+        {tab==='subscriptions' && (
+          <div>
+            <div style={{fontSize:9,color:'#333',letterSpacing:3,marginBottom:20}}>MY SUBSCRIPTIONS</div>
+
+            <div style={{...T.card,marginBottom:20,borderColor:fan?.subscribed?'rgba(180,255,60,0.2)':'rgba(255,45,120,0.2)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div>
+                  <div style={{fontSize:12,color:'#fff',marginBottom:4}}>Platform Subscription</div>
+                  <div style={{fontSize:10,color:'#444'}}>Arena participation · $5/month</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <span style={{fontSize:9,padding:'3px 8px',background:fan?.subscribed?'rgba(180,255,60,0.1)':'rgba(255,45,120,0.1)',color:fan?.subscribed?'#b4ff3c':'#ff2d78',marginBottom:8,display:'block'}}>
+                    {fan?.subscribed?'ACTIVE':'INACTIVE'}
+                  </span>
+                  {fan?.subscribed && (
+                    <button style={{background:'transparent',border:'1px solid rgba(255,45,120,0.3)',color:'#ff2d78',padding:'4px 10px',fontSize:9,cursor:'pointer',fontFamily:'monospace',marginTop:4}} onClick={async()=>{
+                      if (!window.confirm('Unsubscribe from platform? You will lose arena access.')) return
+                      await supabase.from('fans').update({ subscribed: false }).eq('id', fan.id)
+                      setFan(f=>({...f, subscribed:false}))
+                    }}>UNSUBSCRIBE</button>
+                  )}
+                  {!fan?.subscribed && (
+                    <button style={{background:'transparent',border:'1px solid rgba(180,255,60,0.3)',color:'#b4ff3c',padding:'4px 10px',fontSize:9,cursor:'pointer',fontFamily:'monospace',marginTop:4}} onClick={()=>createCheckout(process.env.REACT_APP_STRIPE_FAN_PRICE, fan?.id, 'fan')}>SUBSCRIBE $5/mo</button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>WAR ROOM SUBSCRIPTIONS</div>
+            {myWarRooms.length===0 && <div style={{fontSize:11,color:'#222',marginBottom:16}}>No War Room subscriptions yet</div>}
+            {myWarRooms.map(m=>(
+              <div key={m.id} style={{...T.card,marginBottom:8,borderLeft:'3px solid #ff2d78'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div>
+                    <div style={{fontSize:12,color:'#fff',marginBottom:3}}>{m.war_rooms?.name}</div>
+                    <div style={{fontSize:10,color:'#444'}}>{m.war_rooms?.artists?.name}</div>
+                    <div style={{fontSize:9,color:'#555',marginTop:2}}>Joined {new Date(m.subscribed_at).toLocaleDateString()}</div>
+                  </div>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    <span style={{fontSize:9,padding:'3px 8px',background:'rgba(180,255,60,0.1)',color:'#b4ff3c'}}>ACTIVE</span>
+                    <button style={{background:'transparent',border:'1px solid rgba(255,45,120,0.3)',color:'#ff2d78',padding:'4px 10px',fontSize:9,cursor:'pointer',fontFamily:'monospace'}} onClick={async()=>{
+                      if (!window.confirm(`Unsubscribe from ${m.war_rooms?.name}?`)) return
+                      await supabase.from('war_room_members').delete().eq('id', m.id)
+                      const { data: wr } = await supabase.from('war_rooms').select('subscriber_count').eq('id', m.war_rooms?.id).single()
+                      await supabase.from('war_rooms').update({ subscriber_count: Math.max(0,(wr?.subscriber_count||1)-1) }).eq('id', m.war_rooms?.id)
+                      loadWarRooms()
+                    }}>UNSUBSCRIBE</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* ── PROFILE ── */}
         {tab==='profile' && (
+      
           <div>
             <div style={{...T.card,background:'linear-gradient(135deg,rgba(255,45,120,0.05),rgba(180,255,60,0.05))',borderColor:'rgba(255,45,120,0.2)',marginBottom:20}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
@@ -3099,11 +3199,13 @@ function PlayoffBracket({ bracket }) {
     return (
       <div style={{width:140,border:`1px solid ${s.status==='finished'?'#222':'rgba(255,45,120,0.3)'}`,borderRadius:4,background:'rgba(255,255,255,0.02)',overflow:'hidden'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 8px',borderBottom:'1px solid #111',background:s.winner_id===s.artist1_id?'rgba(255,215,0,0.08)':'transparent'}}>
-          <span style={{fontSize:10,color:s.winner_id===s.artist1_id?'#ffd60a':'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:90}}>{s.artist1?.name||'TBD'}</span>
-          <span style={{fontSize:12,color:s.winner_id===s.artist1_id?'#ffd60a':'#fff',fontWeight:700,minWidth:16,textAlign:'right'}}>{s.artist1_wins}</span>
+         <span style={{fontSize:9,color:'#555',minWidth:14}}>#{s.seed1||'?'}</span>
+          <span style={{fontSize:10,color:s.winner_id===s.artist1_id?'#ffd60a':'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:76}}>{s.artist1?.name||'TBD'}</span>
+          <span style={{fontSize:12,color:s.winner_id===s.artist1_id?'#ffd60a':'#fff',fontWeight:700,minWidth:16,textAlign:'right'}}>{s.artist1_wins}</span> 
         </div>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 8px',background:s.winner_id===s.artist2_id?'rgba(255,215,0,0.08)':'transparent'}}>
-          <span style={{fontSize:10,color:s.winner_id===s.artist2_id?'#ffd60a':'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:90}}>{s.artist2?.name||'TBD'}</span>
+          <span style={{fontSize:9,color:'#555',minWidth:14}}>#{s.seed2||'?'}</span>
+          <span style={{fontSize:10,color:s.winner_id===s.artist2_id?'#ffd60a':'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:76}}>{s.artist2?.name||'TBD'}</span>
           <span style={{fontSize:12,color:s.winner_id===s.artist2_id?'#ffd60a':'#fff',fontWeight:700,minWidth:16,textAlign:'right'}}>{s.artist2_wins}</span>
         </div>
       </div>
