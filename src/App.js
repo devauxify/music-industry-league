@@ -727,6 +727,12 @@ function AdminDashboard({ session, onSignOut }) {
                 <div style={{display:'flex',gap:8,alignItems:'center'}}>
                   <span style={{...T.badge,background:a.paid?'rgba(180,255,60,0.1)':'rgba(255,45,120,0.1)',color:a.paid?'#b4ff3c':'#ff2d78'}}>{a.paid?'PAID':'UNPAID'}</span>
                   <span style={{...T.badge,background:'rgba(255,255,255,0.05)',color:'#444'}}>{a.status||'active'}</span>
+                  <button style={{...T.reject,padding:'4px 10px',fontSize:9}} onClick={async()=>{
+                    if (!window.confirm(`Delete ${a.name}? This cannot be undone.`)) return
+                    await supabase.from('artists').delete().eq('id', a.id)
+                    if (a.user_id) await supabase.rpc('delete_user_account', { uid: a.user_id })
+                    loadArtists()
+                  }}>DELETE</button>
                 </div>
               </div>
             ))}
@@ -1633,9 +1639,16 @@ function ArtistDashboard({ session, onSignOut }) {
                 </div>
               )}
               {artist?.paid && (
-                <div style={{fontSize:11,color:'#444',lineHeight:1.8}}>
-                  Your profile is live and visible to fans.<br/>
-                  You are active in the weekly ranking.
+                <div>
+                  <div style={{fontSize:11,color:'#444',lineHeight:1.8,marginBottom:16}}>
+                    Your profile is live and visible to fans.<br/>
+                    You are active in the weekly ranking.
+                  </div>
+                  <button style={{background:'transparent',border:'1px solid rgba(255,45,120,0.3)',color:'#ff2d78',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={async()=>{
+                    if (!window.confirm('Unsubscribe? Your profile will go offline.')) return
+                    await supabase.from('artists').update({ paid: false }).eq('user_id', session.user.id)
+                    loadArtist()
+                  }}>UNSUBSCRIBE</button>
                 </div>
               )}
             </div>
@@ -1644,6 +1657,22 @@ function ArtistDashboard({ session, onSignOut }) {
                   SUBSCRIBE $60/YR →
                 </button>
               )}
+              <div style={{...T.divider}} />
+            <div style={T.sectionTitle}>CONTACT US</div>
+            <div style={{fontSize:11,color:'#444',lineHeight:1.8,marginBottom:12}}>
+              For inquiries, concerns or support reach out to us directly.
+            </div>
+            <a href="mailto:contact@sendallbank.com" style={{...T.btn,textDecoration:'none',display:'inline-block',textAlign:'center'}}>
+              EMAIL US →
+            </a>
+              <div style={{...T.divider}} />
+            <div style={T.sectionTitle}>DANGER ZONE</div>
+            <button style={{background:'transparent',border:'1px solid rgba(255,45,120,0.3)',color:'#ff2d78',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={async()=>{
+              if (!window.confirm('Delete your account? This cannot be undone.')) return
+              await supabase.from('artists').delete().eq('user_id', session.user.id)
+              await supabase.rpc('delete_user_account', { uid: session.user.id })
+              await supabase.auth.signOut()
+            }}>DELETE MY ACCOUNT</button>
           </div>
         )}
 
@@ -3145,6 +3174,20 @@ function FanDashboard({ session, onSignOut }) {
                 </div>
               </div>
             ))}
+            <div style={{borderTop:'1px solid #111',marginTop:24,paddingTop:20}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:8}}>CONTACT US</div>
+              <div style={{fontSize:11,color:'#444',lineHeight:1.8,marginBottom:12}}>For inquiries, concerns or support reach out to us directly.</div>
+              <a href="mailto:contact@sendallbank.com" style={{background:'transparent',border:'1px solid rgba(180,255,60,0.4)',color:'#b4ff3c',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace',textDecoration:'none',display:'inline-block'}}>EMAIL US →</a>
+            </div>
+            <div style={{borderTop:'1px solid #111',marginTop:24,paddingTop:20}}>
+              <div style={{fontSize:9,color:'#333',letterSpacing:2,marginBottom:12}}>DANGER ZONE</div>
+              <button style={{background:'transparent',border:'1px solid rgba(255,45,120,0.3)',color:'#ff2d78',padding:'8px 20px',fontSize:10,letterSpacing:2,cursor:'pointer',fontFamily:'monospace'}} onClick={async()=>{
+                if (!window.confirm('Delete your account? This cannot be undone.')) return
+                await supabase.from('fans').delete().eq('user_id', session.user.id)
+                await supabase.rpc('delete_user_account', { uid: session.user.id })
+                await supabase.auth.signOut()
+              }}>DELETE MY ACCOUNT</button>
+            </div>
           </div>
         )}
 
