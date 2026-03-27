@@ -2495,7 +2495,7 @@ function FanDashboard({ session, onSignOut }) {
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
                   <div style={{position:'relative',borderRadius:6,overflow:'hidden',background:'#000',aspectRatio:'16/9'}}>
                     {activeGame.home_video_url ? (
-                      <iframe src={getEmbedUrl(activeGame.home_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                      <iframe title="home-artist-video" src={getEmbedUrl(activeGame.home_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
                     ) : (
                       <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No video</div>
                     )}
@@ -2506,7 +2506,7 @@ function FanDashboard({ session, onSignOut }) {
                   </div>
                   <div style={{position:'relative',borderRadius:6,overflow:'hidden',background:'#000',aspectRatio:'16/9'}}>
                     {activeGame.away_video_url ? (
-                      <iframe src={getEmbedUrl(activeGame.away_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                      <iframe title="away-artist-video" src={getEmbedUrl(activeGame.away_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
                     ) : (
                       <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No video</div>
                     )}
@@ -3376,11 +3376,11 @@ function getEmbedUrl(url) {
   if (!url) return ''
   if (url.includes('youtube.com/watch')) {
     const id = new URL(url).searchParams.get('v')
-    return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`
+    return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1`
   }
   if (url.includes('youtu.be/')) {
     const id = url.split('youtu.be/')[1].split('?')[0]
-    return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1`
+    return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1`
   }
   return url
 }
