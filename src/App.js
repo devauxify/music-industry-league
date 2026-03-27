@@ -350,9 +350,11 @@ function AdminDashboard({ session, onSignOut }) {
     const time = document.getElementById('gtime').value
     const homeVideo = document.getElementById('ghomevideo')?.value || null
     const awayVideo = document.getElementById('gawayvideo')?.value || null
+    const homeMediaType = document.getElementById('ghomemediatype')?.value || 'video'
+    const awayMediaType = document.getElementById('gawaymediatype')?.value || 'video'
     if (!activeSeason) { alert('Create a season first'); return }
     if (home === away) { alert('Home and away must be different artists'); return }
-    const { error } = await supabase.from('games').insert({ season_id: activeSeason.id, home_artist_id: home, away_artist_id: away, scheduled_at: time, status:'upcoming', home_video_url: homeVideo, away_video_url: awayVideo })
+    const { error } = await supabase.from('games').insert({ season_id: activeSeason.id, home_artist_id: home, away_artist_id: away, scheduled_at: time, status:'upcoming', home_video_url: homeVideo, away_video_url: awayVideo, home_media_type: homeMediaType, away_media_type: awayMediaType })
     if (error) { alert('Error: ' + error.message); return }
     await loadLeagueGames(gamesPage, gamesFilter)
     alert('Game scheduled!')
@@ -823,13 +825,57 @@ function AdminDashboard({ session, onSignOut }) {
                 <input type="datetime-local" id="gtime" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace'}} />
               </div>
             </div>
-            <div>
-                <div style={T.label}>HOME ARTIST VIDEO URL (YouTube or MP4)</div>
-                <input type="text" id="ghomevideo" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:8}} placeholder="https://youtube.com/watch?v=..." />
+            <div style={{marginBottom:8}}>
+                <div style={T.label}>HOME ARTIST MEDIA</div>
+                <div style={{display:'flex',gap:8,marginBottom:6}}>
+                  <select id="ghomemediatype" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'6px 8px',fontSize:10,fontFamily:'monospace'}}>
+                    <option value="video">Video URL</option>
+                    <option value="image">Upload Image</option>
+                  </select>
+                </div>
+                <input type="text" id="ghomevideo" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:4}} placeholder="https://... or leave blank to upload" />
+                <label style={{...T.uploadBox,marginBottom:0,padding:'8px',cursor:'pointer',display:'block'}}>
+                  <div style={{fontSize:9,color:'#444'}}>Or upload image/video file</div>
+                  <input type="file" accept="image/*,video/*" style={{display:'none'}} onChange={async(e)=>{
+                    const file = e.target.files[0]
+                    if (!file) return
+                    const ext = file.name.split('.').pop()
+                    const path = `games/home-${Date.now()}.${ext}`
+                    const bucket = file.type.startsWith('video') ? 'album-images' : 'profile-images'
+                    const { error } = await supabase.storage.from(bucket).upload(path, file)
+                    if (error) { alert('Upload error: '+error.message); return }
+                    const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+                    document.getElementById('ghomevideo').value = data.publicUrl
+                    document.getElementById('ghomemediatype').value = file.type.startsWith('video') ? 'video' : 'image'
+                    alert('Home media uploaded!')
+                  }} />
+                </label>
               </div>
-              <div>
-                <div style={T.label}>AWAY ARTIST VIDEO URL (YouTube or MP4)</div>
-                <input type="text" id="gawayvideo" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:8}} placeholder="https://youtube.com/watch?v=..." />
+              <div style={{marginBottom:8}}>
+                <div style={T.label}>AWAY ARTIST MEDIA</div>
+                <div style={{display:'flex',gap:8,marginBottom:6}}>
+                  <select id="gawaymediatype" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'6px 8px',fontSize:10,fontFamily:'monospace'}}>
+                    <option value="video">Video URL</option>
+                    <option value="image">Upload Image</option>
+                  </select>
+                </div>
+                <input type="text" id="gawayvideo" style={{background:'#0a0a0a',border:'1px solid #222',color:'#fff',padding:'8px',fontSize:10,fontFamily:'monospace',width:'100%',boxSizing:'border-box',marginBottom:4}} placeholder="https://... or leave blank to upload" />
+                <label style={{...T.uploadBox,marginBottom:0,padding:'8px',cursor:'pointer',display:'block'}}>
+                  <div style={{fontSize:9,color:'#444'}}>Or upload image/video file</div>
+                  <input type="file" accept="image/*,video/*" style={{display:'none'}} onChange={async(e)=>{
+                    const file = e.target.files[0]
+                    if (!file) return
+                    const ext = file.name.split('.').pop()
+                    const path = `games/away-${Date.now()}.${ext}`
+                    const bucket = file.type.startsWith('video') ? 'album-images' : 'profile-images'
+                    const { error } = await supabase.storage.from(bucket).upload(path, file)
+                    if (error) { alert('Upload error: '+error.message); return }
+                    const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+                    document.getElementById('gawayvideo').value = data.publicUrl
+                    document.getElementById('gawaymediatype').value = file.type.startsWith('video') ? 'video' : 'image'
+                    alert('Away media uploaded!')
+                  }} />
+                </label>
               </div>
             <button style={T.submitBtn} onClick={scheduleGame}>SCHEDULE GAME →</button>
             {true && (
@@ -2495,9 +2541,13 @@ function FanDashboard({ session, onSignOut }) {
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
                   <div style={{position:'relative',borderRadius:6,overflow:'hidden',background:'#000',aspectRatio:'16/9'}}>
                     {activeGame.home_video_url ? (
-                      <iframe title="home-artist-video" src={getEmbedUrl(activeGame.home_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                      activeGame.home_media_type === 'image' ? (
+                        <img src={activeGame.home_video_url} alt="home" style={{width:'100%',height:'100%',objectFit:'cover'}} />
+                      ) : (
+                        <iframe title="home-artist-video" src={getEmbedUrl(activeGame.home_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                      )
                     ) : (
-                      <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No video</div>
+                      <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No media</div>
                     )}
                     <div style={{position:'absolute',bottom:8,left:8,background:'rgba(0,0,0,0.75)',padding:'4px 10px',borderRadius:4}}>
                       <div style={{fontSize:11,color:'#fff',fontWeight:700}}>{activeGame.home?.name}</div>
@@ -2506,9 +2556,13 @@ function FanDashboard({ session, onSignOut }) {
                   </div>
                   <div style={{position:'relative',borderRadius:6,overflow:'hidden',background:'#000',aspectRatio:'16/9'}}>
                     {activeGame.away_video_url ? (
-                      <iframe title="away-artist-video" src={getEmbedUrl(activeGame.away_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                      activeGame.away_media_type === 'image' ? (
+                        <img src={activeGame.away_video_url} alt="away" style={{width:'100%',height:'100%',objectFit:'cover'}} />
+                      ) : (
+                        <iframe title="away-artist-video" src={getEmbedUrl(activeGame.away_video_url)} style={{width:'100%',height:'100%',border:'none'}} allow="autoplay; fullscreen" allowFullScreen />
+                      )
                     ) : (
-                      <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No video</div>
+                      <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#333',fontSize:11}}>No media</div>
                     )}
                     <div style={{position:'absolute',bottom:8,right:8,background:'rgba(0,0,0,0.75)',padding:'4px 10px',borderRadius:4}}>
                       <div style={{fontSize:11,color:'#fff',fontWeight:700}}>{activeGame.away?.name}</div>
