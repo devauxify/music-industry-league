@@ -891,8 +891,42 @@ function AdminDashboard({ session, onSignOut }) {
                     <div style={{fontSize:11,color:'#fff',flex:1}}>{g.home?.name} <span style={{color:'#333'}}>vs</span> {g.away?.name}</div>
                     <div style={{fontSize:10,color:'#444'}}>{g.scheduled_at ? new Date(g.scheduled_at).toLocaleString() : 'TBD'}</div>
                     <span style={{fontSize:9,padding:'3px 8px',background:g.status==='live'?'rgba(255,45,120,0.1)':g.status==='finished'?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.03)',color:g.status==='live'?'#ff2d78':g.status==='finished'?'#555':'#444'}}>{g.status.toUpperCase()}</span>
-                    {g.status==='upcoming' && <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>goLive(g.id)}>GO LIVE</button>}
-                  {g.status==='live' && <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>advanceQuarter(g.id)}>NEXT QUARTER →</button>}
+                   {g.status==='upcoming' && <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>goLive(g.id)}>GO LIVE</button>}
+                    {g.status==='live' && <button style={{...T.approve,padding:'4px 10px',fontSize:9}} onClick={()=>advanceQuarter(g.id)}>NEXT QUARTER →</button>}
+                    <label style={{...T.approve,padding:'4px 10px',fontSize:9,cursor:'pointer',display:'inline-block'}}>
+                      HOME MEDIA
+                      <input type="file" accept="image/*,video/*" style={{display:'none'}} onChange={async(e)=>{
+                        const file = e.target.files[0]
+                        if (!file) return
+                        const ext = file.name.split('.').pop()
+                        const path = `games/home-${Date.now()}.${ext}`
+                        const bucket = 'profile-images'
+                        const {error} = await supabase.storage.from(bucket).upload(path, file)
+                        if (error) { alert('Upload error: '+error.message); return }
+                        const {data} = supabase.storage.from(bucket).getPublicUrl(path)
+                        const mediaType = file.type.startsWith('video') ? 'video' : 'image'
+                        await supabase.from('games').update({ home_video_url: data.publicUrl, home_media_type: mediaType }).eq('id', g.id)
+                        loadLeagueGames(gamesPage, gamesFilter)
+                        alert('Home media updated!')
+                      }} />
+                    </label>
+                    <label style={{...T.approve,padding:'4px 10px',fontSize:9,cursor:'pointer',display:'inline-block'}}>
+                      AWAY MEDIA
+                      <input type="file" accept="image/*,video/*" style={{display:'none'}} onChange={async(e)=>{
+                        const file = e.target.files[0]
+                        if (!file) return
+                        const ext = file.name.split('.').pop()
+                        const path = `games/away-${Date.now()}.${ext}`
+                        const bucket = 'profile-images'
+                        const {error} = await supabase.storage.from(bucket).upload(path, file)
+                        if (error) { alert('Upload error: '+error.message); return }
+                        const {data} = supabase.storage.from(bucket).getPublicUrl(path)
+                        const mediaType = file.type.startsWith('video') ? 'video' : 'image'
+                        await supabase.from('games').update({ away_video_url: data.publicUrl, away_media_type: mediaType }).eq('id', g.id)
+                        loadLeagueGames(gamesPage, gamesFilter)
+                        alert('Away media updated!')
+                      }} />
+                    </label>
                     <button style={{...T.reject,padding:'4px 10px',fontSize:9}} onClick={async()=>{
                       await supabase.from('games').delete().eq('id',g.id)
                       loadLeagueGames()
